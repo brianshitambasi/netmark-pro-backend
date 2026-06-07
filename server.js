@@ -36,7 +36,7 @@ app.get('/health', (req, res) => {
   });
 });
 
-// Mount routes
+// ========== ALL API ROUTES MUST BE BEFORE 404 HANDLER ==========
 app.use('/api/auth', require('./routes/authRoutes'));
 app.use('/api/followups', require('./routes/followupRoutes'));
 app.use('/api/goals', require('./routes/goalRoutes'));
@@ -45,8 +45,9 @@ app.use('/api/dashboard', require('./routes/dashboardRoutes'));
 app.use('/api/events', require('./routes/eventRoutes'));
 app.use('/api/tasks', require('./routes/taskRoutes'));
 app.use('/api/templates', require('./routes/templateRoutes'));
+app.use('/api/prospects', require('./routes/prospectRoutes'));  // <-- MOVED HERE
 
-// 404 handler
+// 404 handler - THIS MUST BE LAST
 app.use('*', (req, res) => {
   res.status(404).json({
     success: false,
@@ -66,6 +67,7 @@ const server = app.listen(PORT, () => {
   console.log(`í¾¯ Goals: http://localhost:${PORT}/api/goals`);
   console.log(`í¶¼ï¸ Gallery: http://localhost:${PORT}/api/gallery`);
   console.log(`í³Š Dashboard: http://localhost:${PORT}/api/dashboard`);
+  console.log(`í±¥ Prospects: http://localhost:${PORT}/api/prospects`);
 });
 
 // Handle unhandled promise rejections
@@ -73,6 +75,3 @@ process.on('unhandledRejection', (err, promise) => {
   console.log(`Error: ${err.message}`);
   server.close(() => process.exit(1));
 });
-
-// Prospect routes
-app.use('/api/prospects', require('./routes/prospectRoutes'));
