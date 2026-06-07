@@ -73,3 +73,6 @@ process.on('unhandledRejection', (err, promise) => {
   console.log(`Error: ${err.message}`);
   server.close(() => process.exit(1));
 });
+
+// Prospect routes
+app.use('/api/prospects', require('./routes/prospectRoutes'));
