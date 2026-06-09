@@ -12,26 +12,24 @@ const {
   deleteFollowup,
   rescheduleFollowup,
   quickReschedule,
-  getFollowupHistory,
+  addPayment,
+  openAccount,
+  updatePaymentDetails,
   getAnalytics
 } = require('../controllers/followupController');
 
 router.use(protect);
 
-// Analytics
 router.get('/analytics', getAnalytics);
-
-// Reschedule endpoints
 router.put('/:id/reschedule', rescheduleFollowup);
 router.post('/:id/quick-reschedule', quickReschedule);
-router.get('/:id/history', getFollowupHistory);
-
-// Action endpoints
 router.put('/:id/whatsapp-click', whatsappClick);
 router.put('/:id/mark-followed', markFollowed);
 router.put('/:id/convert', convertFollowup);
+router.post('/:id/payment', addPayment);
+router.post('/:id/open-account', openAccount);
+router.put('/:id/payment-details', updatePaymentDetails);
 
-// Main CRUD
 router.route('/')
   .get(getFollowups)
   .post(createFollowup);
