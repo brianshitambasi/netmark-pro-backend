@@ -7,7 +7,18 @@ const PaymentSchema = new mongoose.Schema({
   transactionId: { type: String, default: '' },
   reference: { type: String, default: '' },
   notes: { type: String, default: '' },
-  receiptUrl: { type: String, default: '' }
+  receiptUrl: { type: String, default: '' },
+  isDeposit: { type: Boolean, default: false },
+  installmentNumber: { type: Number, default: null }
+});
+
+const PaymentScheduleSchema = new mongoose.Schema({
+  dueDate: { type: Date, required: true },
+  amount: { type: Number, required: true },
+  status: { type: String, enum: ['pending', 'paid', 'overdue'], default: 'pending' },
+  paidDate: { type: Date, default: null },
+  transactionId: { type: String, default: '' },
+  notes: { type: String, default: '' }
 });
 
 const FollowupSchema = new mongoose.Schema({
@@ -48,8 +59,15 @@ const FollowupSchema = new mongoose.Schema({
   
   paymentStatus: {
     type: String,
-    enum: ['pending', 'partial', 'paid', 'overdue'],
+    enum: ['pending', 'partial', 'paid', 'overdue', 'deposit_paid', 'installment'],
     default: 'pending'
+  },
+  
+  // Payment Plan Options
+  paymentPlan: {
+    type: String,
+    enum: ['full', 'partial', 'installment', 'deposit', 'subscription'],
+    default: 'full'
   },
   
   // Payment Details
@@ -57,12 +75,22 @@ const FollowupSchema = new mongoose.Schema({
   amountPaid: { type: Number, default: 0, min: 0 },
   remainingBalance: { type: Number, default: 0 },
   
-  paymentPlan: {
-    type: String,
-    enum: ['full', 'installment', 'deposit', 'subscription'],
-    default: 'full'
-  },
+  // Partial Payment
+  partialAmount: { type: Number, default: 0 },
+  partialDeadline: { type: Date, default: null },
   
+  // Deposit Payment
+  depositAmount: { type: Number, default: 0 },
+  depositPaid: { type: Boolean, default: false },
+  depositDeadline: { type: Date, default: null },
+  
+  // Installment Plan
+  installmentCount: { type: Number, default: 1 },
+  currentInstallment: { type: Number, default: 0 },
+  installmentAmount: { type: Number, default: 0 },
+  paymentSchedule: [PaymentScheduleSchema],
+  
+  // All Payments
   payments: [PaymentSchema],
   
   // Account Opening Details
@@ -93,7 +121,8 @@ const FollowupSchema = new mongoose.Schema({
     action: { type: String, enum: [
       'created', 'whatsapp_click', 'marked_followed', 'converted', 'missed',
       'reminder_sent', 'category_changed', 'date_changed', 'note_added',
-      'objection_raised', 'objection_resolved', 'payment_made', 'account_opened'
+      'objection_raised', 'objection_resolved', 'payment_made', 'account_opened',
+      'payment_plan_set', 'installment_paid', 'deposit_paid'
     ]},
     timestamp: { type: Date, default: Date.now },
     notes: String,
@@ -128,36 +157,26 @@ const FollowupSchema = new mongoose.Schema({
   updatedAt: { type: Date, default: Date.now }
 }, { timestamps: true, toJSON: { virtuals: true }, toObject: { virtuals: true } });
 
-// Indexes for faster queries
+// Indexes
 FollowupSchema.index({ nextCallDate: 1, status: 1 });
 FollowupSchema.index({ createdBy: 1, status: 1 });
-FollowupSchema.index({ createdBy: 1, nextCallDate: 1 });
-FollowupSchema.index({ category: 1, status: 1 });
-FollowupSchema.index({ tags: 1 });
-FollowupSchema.index({ paymentStatus: 1, accountStatus: 1 });
+FollowupSchema.index({ paymentStatus: 1, paymentPlan: 1 });
 
 // Virtuals
-FollowupSchema.virtual('daysUntilFollowup').get(function() {
-  const today = new Date();
-  const diffTime = this.nextCallDate - today;
-  return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-});
-
-FollowupSchema.virtual('isOverdue').get(function() {
-  return this.nextCallDate < new Date() && this.status === 'pending';
-});
-
-FollowupSchema.virtual('severity').get(function() {
-  if (!this.isOverdue) return 'none';
-  const daysOverdue = Math.ceil((new Date() - this.nextCallDate) / (1000 * 60 * 60 * 24));
-  if (daysOverdue >= 3) return 'critical';
-  if (daysOverdue >= 1) return 'warning';
-  return 'info';
-});
-
 FollowupSchema.virtual('paymentProgress').get(function() {
   if (this.totalAmount === 0) return 0;
   return (this.amountPaid / this.totalAmount) * 100;
+});
+
+FollowupSchema.virtual('remainingPercentage').get(function() {
+  if (this.totalAmount === 0) return 0;
+  return ((this.totalAmount - this.amountPaid) / this.totalAmount) * 100;
+});
+
+FollowupSchema.virtual('nextInstallment').get(function() {
+  if (this.paymentPlan !== 'installment') return null;
+  const nextPending = this.paymentSchedule.find(s => s.status === 'pending');
+  return nextPending;
 });
 
 // Pre-save middleware
@@ -165,13 +184,38 @@ FollowupSchema.pre('save', function(next) {
   // Auto-update remaining balance
   this.remainingBalance = this.totalAmount - this.amountPaid;
   
-  // Auto-update payment status
-  if (this.remainingBalance <= 0) {
-    this.paymentStatus = 'paid';
-  } else if (this.amountPaid > 0 && this.remainingBalance > 0) {
-    this.paymentStatus = 'partial';
-  } else {
-    this.paymentStatus = 'pending';
+  // Auto-update payment status based on payment plan
+  if (this.paymentPlan === 'full') {
+    if (this.remainingBalance <= 0) {
+      this.paymentStatus = 'paid';
+    } else if (this.amountPaid > 0) {
+      this.paymentStatus = 'partial';
+    } else {
+      this.paymentStatus = 'pending';
+    }
+  } else if (this.paymentPlan === 'deposit') {
+    if (this.depositPaid && this.remainingBalance <= 0) {
+      this.paymentStatus = 'paid';
+    } else if (this.depositPaid) {
+      this.paymentStatus = 'deposit_paid';
+    } else {
+      this.paymentStatus = 'pending';
+    }
+  } else if (this.paymentPlan === 'installment') {
+    const allPaid = this.paymentSchedule.every(s => s.status === 'paid');
+    if (allPaid) {
+      this.paymentStatus = 'paid';
+    } else {
+      this.paymentStatus = 'installment';
+    }
+  } else if (this.paymentPlan === 'partial') {
+    if (this.remainingBalance <= 0) {
+      this.paymentStatus = 'paid';
+    } else if (this.amountPaid > 0) {
+      this.paymentStatus = 'partial';
+    } else {
+      this.paymentStatus = 'pending';
+    }
   }
   
   // Auto-update status based on date
@@ -180,7 +224,6 @@ FollowupSchema.pre('save', function(next) {
     this.missedCount += 1;
   }
   
-  // Update timestamp
   this.updatedAt = Date.now();
   
   // Update followup count when marked as followed

@@ -1,7 +1,13 @@
 const express = require('express');
 const router = express.Router();
-const { protect } = require('../middleware/auth');
 const {
+  setPaymentPlan,
+  payInstallment,
+  payDeposit, protect } = require('../middleware/auth');
+const {
+  setPaymentPlan,
+  payInstallment,
+  payDeposit,
   createFollowup,
   getFollowups,
   getFollowupById,
@@ -40,3 +46,8 @@ router.route('/:id')
   .delete(deleteFollowup);
 
 module.exports = router;
+
+// Payment plan routes
+router.post('/:id/set-payment-plan', setPaymentPlan);
+router.post('/:id/pay-installment', payInstallment);
+router.post('/:id/pay-deposit', payDeposit);
