@@ -562,3 +562,39 @@ exports.payDeposit = async (req, res) => {
 };
 
 module.exports = exports;
+
+// @desc    Set total amount for existing followup
+// @route   PUT /api/followups/:id/set-amount
+exports.setTotalAmount = async (req, res) => {
+  try {
+    const { totalAmount } = req.body;
+    const followup = await Followup.findById(req.params.id);
+    
+    if (!followup) {
+      return res.status(404).json({ success: false, message: 'Followup not found' });
+    }
+    
+    const amount = parseFloat(totalAmount);
+    if (isNaN(amount)) {
+      return res.status(400).json({ success: false, message: 'Invalid amount' });
+    }
+    
+    followup.totalAmount = amount;
+    followup.remainingBalance = amount - (followup.amountPaid || 0);
+    
+    if (followup.remainingBalance <= 0) {
+      followup.paymentStatus = 'paid';
+    } else if (followup.amountPaid > 0) {
+      followup.paymentStatus = 'partial';
+    } else {
+      followup.paymentStatus = 'pending';
+    }
+    
+    await followup.save();
+    
+    res.json({ success: true, data: followup, message: `Total amount set to ${amount}` });
+  } catch (error) {
+    console.error('Set total amount error:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
