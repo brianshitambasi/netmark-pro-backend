@@ -4,7 +4,7 @@ const Goal = require('../models/Goal');
 const Task = require('../models/Task');
 const moment = require('moment');
 
-// @desc    Create new followup
+// @desc    Create new followup - FIXED to save totalAmount
 exports.createFollowup = async (req, res) => {
   try {
     const {
@@ -13,13 +13,21 @@ exports.createFollowup = async (req, res) => {
       totalAmount, packageName, packagePrice
     } = req.body;
 
+    // Ensure totalAmount is saved correctly
+    const amount = parseFloat(totalAmount) || 0;
+
     const followup = new Followup({
       name, phone, email, category: category || 'warm', nextCallDate, notes,
       source: source || 'other', interestLevel: interestLevel || 5,
       preferredContactTime: preferredContactTime || 'any',
-      totalAmount: totalAmount || 0, packageName: packageName || '',
-      packagePrice: packagePrice || 0, createdBy: req.user.id,
-      amountPaid: 0, remainingBalance: totalAmount || 0, paymentStatus: 'pending'
+      totalAmount: amount,
+      packageName: packageName || '',
+      packagePrice: packagePrice || 0,
+      createdBy: req.user.id,
+      amountPaid: 0,
+      remainingBalance: amount,
+      paymentStatus: amount > 0 ? 'pending' : 'pending',
+      paymentPlan: 'full'
     });
 
     await followup.save();
@@ -33,6 +41,117 @@ exports.createFollowup = async (req, res) => {
     await task.save();
 
     res.status(201).json({ success: true, data: followup, task });
+  } catch (error) {
+    console.error('Create followup error:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Update followup - FIXED to update totalAmount
+exports.updateFollowup = async (req, res) => {
+  try {
+    const { totalAmount } = req.body;
+    
+    if (totalAmount !== undefined) {
+      const amount = parseFloat(totalAmount);
+      req.body.totalAmount = amount;
+      req.body.remainingBalance = amount - (req.body.amountPaid || 0);
+    }
+    
+    const updated = await Followup.findByIdAndUpdate(
+      req.params.id, 
+      req.body, 
+      { new: true, runValidators: true }
+    );
+    
+    res.json({ success: true, data: updated });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Add payment to followup
+exports.addPayment = async (req, res) => {
+  try {
+    const { amount, paymentMethod, transactionId, notes } = req.body;
+    const paymentAmount = parseFloat(amount);
+    
+    const followup = await Followup.findById(req.params.id);
+    
+    if (!followup) {
+      return res.status(404).json({ success: false, message: 'Followup not found' });
+    }
+    
+    // Update payment amounts
+    const oldAmountPaid = followup.amountPaid || 0;
+    followup.amountPaid = oldAmountPaid + paymentAmount;
+    followup.remainingBalance = (followup.totalAmount || 0) - followup.amountPaid;
+    
+    // Update payment status
+    if (followup.remainingBalance <= 0) {
+      followup.paymentStatus = 'paid';
+    } else if (followup.amountPaid > 0) {
+      followup.paymentStatus = 'partial';
+    } else {
+      followup.paymentStatus = 'pending';
+    }
+    
+    // Add payment record
+    followup.payments = followup.payments || [];
+    followup.payments.push({
+      amount: paymentAmount,
+      paymentDate: new Date(),
+      paymentMethod: paymentMethod || 'mpesa',
+      transactionId: transactionId || '',
+      notes: notes || ''
+    });
+    
+    // Add to history
+    followup.followupHistory = followup.followupHistory || [];
+    followup.followupHistory.push({
+      action: 'payment_made',
+      notes: `Payment of ${paymentAmount} received via ${paymentMethod || 'mpesa'}`,
+      previousValue: oldAmountPaid,
+      newValue: followup.amountPaid
+    });
+    
+    await followup.save();
+    
+    res.json({
+      success: true,
+      data: followup,
+      message: `Payment of ${paymentAmount} recorded successfully. Total paid: ${followup.amountPaid}, Remaining: ${followup.remainingBalance}`
+    });
+  } catch (error) {
+    console.error('Add payment error:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Update total amount for existing followup
+// @route   PUT /api/followups/:id/set-amount
+exports.setTotalAmount = async (req, res) => {
+  try {
+    const { totalAmount } = req.body;
+    const followup = await Followup.findById(req.params.id);
+    
+    if (!followup) {
+      return res.status(404).json({ success: false, message: 'Followup not found' });
+    }
+    
+    const amount = parseFloat(totalAmount);
+    followup.totalAmount = amount;
+    followup.remainingBalance = amount - (followup.amountPaid || 0);
+    
+    if (followup.remainingBalance <= 0) {
+      followup.paymentStatus = 'paid';
+    } else if (followup.amountPaid > 0) {
+      followup.paymentStatus = 'partial';
+    }
+    
+    await followup.save();
+    
+    res.json({ success: true, data: followup, message: `Total amount set to ${amount}` });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -88,230 +207,6 @@ exports.getFollowups = async (req, res) => {
     };
 
     res.json({ success: true, data: followups, summary, pagination: { page: parseInt(page), pages: Math.ceil(total / limit), total } });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-};
-
-// @desc    Add payment to followup - FIXED VERSION
-exports.addPayment = async (req, res) => {
-  try {
-    const { amount, paymentMethod, transactionId, notes } = req.body;
-    const paymentAmount = parseFloat(amount);
-    
-    const followup = await Followup.findById(req.params.id);
-    
-    if (!followup) {
-      return res.status(404).json({ success: false, message: 'Followup not found' });
-    }
-    
-    // Update payment amounts
-    const oldAmountPaid = followup.amountPaid || 0;
-    followup.amountPaid = oldAmountPaid + paymentAmount;
-    followup.remainingBalance = (followup.totalAmount || 0) - followup.amountPaid;
-    
-    // Update payment status
-    if (followup.remainingBalance <= 0) {
-      followup.paymentStatus = 'paid';
-    } else if (followup.amountPaid > 0) {
-      followup.paymentStatus = 'partial';
-    } else {
-      followup.paymentStatus = 'pending';
-    }
-    
-    // Add payment record
-    followup.payments = followup.payments || [];
-    followup.payments.push({
-      amount: paymentAmount,
-      paymentDate: new Date(),
-      paymentMethod: paymentMethod || 'mpesa',
-      transactionId: transactionId || '',
-      notes: notes || ''
-    });
-    
-    // Add to history
-    followup.followupHistory = followup.followupHistory || [];
-    followup.followupHistory.push({
-      action: 'payment_made',
-      notes: `Payment of ${paymentAmount} received via ${paymentMethod || 'mpesa'}`,
-      previousValue: oldAmountPaid,
-      newValue: followup.amountPaid
-    });
-    
-    await followup.save();
-    
-    // Return updated followup
-    const updatedFollowup = await Followup.findById(req.params.id);
-    
-    res.json({
-      success: true,
-      data: updatedFollowup,
-      message: `Payment of ${paymentAmount} recorded successfully. Total paid: ${updatedFollowup.amountPaid}, Remaining: ${updatedFollowup.remainingBalance}`
-    });
-  } catch (error) {
-    console.error('Add payment error:', error);
-    res.status(500).json({ success: false, message: error.message });
-  }
-};
-
-// @desc    Update payment details (set total amount)
-exports.updatePaymentDetails = async (req, res) => {
-  try {
-    const { totalAmount } = req.body;
-    const followup = await Followup.findById(req.params.id);
-    
-    if (!followup) {
-      return res.status(404).json({ success: false, message: 'Followup not found' });
-    }
-    
-    followup.totalAmount = parseFloat(totalAmount);
-    followup.remainingBalance = followup.totalAmount - (followup.amountPaid || 0);
-    
-    if (followup.remainingBalance <= 0) {
-      followup.paymentStatus = 'paid';
-    } else if (followup.amountPaid > 0) {
-      followup.paymentStatus = 'partial';
-    } else {
-      followup.paymentStatus = 'pending';
-    }
-    
-    await followup.save();
-    
-    res.json({ success: true, data: followup, message: 'Payment details updated' });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-};
-
-// @desc    Set payment plan
-exports.setPaymentPlan = async (req, res) => {
-  try {
-    const { plan, totalAmount, depositAmount, installmentCount, partialAmount, partialDeadline } = req.body;
-    const followup = await Followup.findById(req.params.id);
-    
-    if (!followup) {
-      return res.status(404).json({ success: false, message: 'Followup not found' });
-    }
-    
-    if (totalAmount) {
-      followup.totalAmount = parseFloat(totalAmount);
-      followup.remainingBalance = followup.totalAmount - (followup.amountPaid || 0);
-    }
-    
-    followup.paymentPlan = plan;
-    
-    if (plan === 'deposit') {
-      followup.depositAmount = depositAmount || followup.totalAmount * 0.3;
-      followup.depositPaid = false;
-      if (partialDeadline) followup.depositDeadline = new Date(partialDeadline);
-    } else if (plan === 'installment') {
-      followup.installmentCount = installmentCount || 3;
-      followup.installmentAmount = followup.totalAmount / followup.installmentCount;
-      followup.paymentSchedule = [];
-      for (let i = 1; i <= followup.installmentCount; i++) {
-        const dueDate = new Date();
-        dueDate.setMonth(dueDate.getMonth() + i);
-        followup.paymentSchedule.push({
-          dueDate: dueDate,
-          amount: followup.installmentAmount,
-          status: 'pending'
-        });
-      }
-    } else if (plan === 'partial') {
-      followup.partialAmount = partialAmount || followup.totalAmount;
-      if (partialDeadline) followup.partialDeadline = new Date(partialDeadline);
-    }
-    
-    await followup.save();
-    
-    res.json({ success: true, data: followup, message: `Payment plan set to ${plan}` });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-};
-
-// @desc    Pay installment
-exports.payInstallment = async (req, res) => {
-  try {
-    const { installmentNumber, amount, paymentMethod, transactionId } = req.body;
-    const followup = await Followup.findById(req.params.id);
-    
-    if (!followup) {
-      return res.status(404).json({ success: false, message: 'Followup not found' });
-    }
-    
-    const installment = followup.paymentSchedule[installmentNumber - 1];
-    if (!installment) {
-      return res.status(404).json({ success: false, message: 'Installment not found' });
-    }
-    
-    const paymentAmount = parseFloat(amount || installment.amount);
-    
-    installment.status = 'paid';
-    installment.paidDate = new Date();
-    installment.transactionId = transactionId;
-    
-    followup.payments.push({
-      amount: paymentAmount,
-      paymentDate: new Date(),
-      paymentMethod: paymentMethod || 'mpesa',
-      transactionId: transactionId,
-      notes: `Installment ${installmentNumber} of ${followup.installmentCount}`,
-      installmentNumber: installmentNumber
-    });
-    
-    followup.amountPaid = (followup.amountPaid || 0) + paymentAmount;
-    followup.remainingBalance = followup.totalAmount - followup.amountPaid;
-    followup.currentInstallment = installmentNumber;
-    
-    if (followup.remainingBalance <= 0) {
-      followup.paymentStatus = 'paid';
-    } else {
-      followup.paymentStatus = 'installment';
-    }
-    
-    await followup.save();
-    
-    res.json({ success: true, data: followup, message: `Installment ${installmentNumber} paid successfully` });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-};
-
-// @desc    Pay deposit
-exports.payDeposit = async (req, res) => {
-  try {
-    const { amount, paymentMethod, transactionId } = req.body;
-    const followup = await Followup.findById(req.params.id);
-    
-    if (!followup) {
-      return res.status(404).json({ success: false, message: 'Followup not found' });
-    }
-    
-    const paymentAmount = parseFloat(amount || followup.depositAmount);
-    
-    followup.depositPaid = true;
-    followup.amountPaid = (followup.amountPaid || 0) + paymentAmount;
-    followup.remainingBalance = followup.totalAmount - followup.amountPaid;
-    
-    followup.payments.push({
-      amount: paymentAmount,
-      paymentDate: new Date(),
-      paymentMethod: paymentMethod || 'mpesa',
-      transactionId: transactionId,
-      notes: 'Deposit payment',
-      isDeposit: true
-    });
-    
-    if (followup.remainingBalance <= 0) {
-      followup.paymentStatus = 'paid';
-    } else {
-      followup.paymentStatus = 'deposit_paid';
-    }
-    
-    await followup.save();
-    
-    res.json({ success: true, data: followup, message: 'Deposit paid successfully' });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -463,17 +358,7 @@ exports.convertFollowup = async (req, res) => {
     await followup.save();
     await User.findByIdAndUpdate(req.user.id, { $inc: { 'stats.totalConversions': 1, 'stats.totalSales': salesAmount || 0 } });
     
-    res.json({ success: true, data: followup, message: `í¾‰ ${followup.name} converted successfully!` });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-};
-
-// @desc    Update followup
-exports.updateFollowup = async (req, res) => {
-  try {
-    const updated = await Followup.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true });
-    res.json({ success: true, data: updated });
+    res.json({ success: true, data: followup, message: `ï¿½ï¿½ ${followup.name} converted successfully!` });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -537,6 +422,140 @@ exports.openAccount = async (req, res) => {
     await followup.save();
     
     res.json({ success: true, data: followup, message: `Account opened for ${followup.name}` });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Set payment plan
+exports.setPaymentPlan = async (req, res) => {
+  try {
+    const { plan, totalAmount, depositAmount, installmentCount, partialAmount, partialDeadline } = req.body;
+    const followup = await Followup.findById(req.params.id);
+    
+    if (!followup) {
+      return res.status(404).json({ success: false, message: 'Followup not found' });
+    }
+    
+    if (totalAmount) {
+      followup.totalAmount = parseFloat(totalAmount);
+      followup.remainingBalance = followup.totalAmount - (followup.amountPaid || 0);
+    }
+    
+    followup.paymentPlan = plan;
+    
+    if (plan === 'deposit') {
+      followup.depositAmount = depositAmount || followup.totalAmount * 0.3;
+      followup.depositPaid = false;
+      if (partialDeadline) followup.depositDeadline = new Date(partialDeadline);
+    } else if (plan === 'installment') {
+      followup.installmentCount = installmentCount || 3;
+      followup.installmentAmount = followup.totalAmount / followup.installmentCount;
+      followup.paymentSchedule = [];
+      for (let i = 1; i <= followup.installmentCount; i++) {
+        const dueDate = new Date();
+        dueDate.setMonth(dueDate.getMonth() + i);
+        followup.paymentSchedule.push({
+          dueDate: dueDate,
+          amount: followup.installmentAmount,
+          status: 'pending'
+        });
+      }
+    } else if (plan === 'partial') {
+      followup.partialAmount = partialAmount || followup.totalAmount;
+      if (partialDeadline) followup.partialDeadline = new Date(partialDeadline);
+    }
+    
+    await followup.save();
+    
+    res.json({ success: true, data: followup, message: `Payment plan set to ${plan}` });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Pay installment
+exports.payInstallment = async (req, res) => {
+  try {
+    const { installmentNumber, amount, paymentMethod, transactionId } = req.body;
+    const followup = await Followup.findById(req.params.id);
+    
+    if (!followup) {
+      return res.status(404).json({ success: false, message: 'Followup not found' });
+    }
+    
+    const installment = followup.paymentSchedule[installmentNumber - 1];
+    if (!installment) {
+      return res.status(404).json({ success: false, message: 'Installment not found' });
+    }
+    
+    const paymentAmount = parseFloat(amount || installment.amount);
+    
+    installment.status = 'paid';
+    installment.paidDate = new Date();
+    installment.transactionId = transactionId;
+    
+    followup.payments.push({
+      amount: paymentAmount,
+      paymentDate: new Date(),
+      paymentMethod: paymentMethod || 'mpesa',
+      transactionId: transactionId,
+      notes: `Installment ${installmentNumber} of ${followup.installmentCount}`,
+      installmentNumber: installmentNumber
+    });
+    
+    followup.amountPaid = (followup.amountPaid || 0) + paymentAmount;
+    followup.remainingBalance = followup.totalAmount - followup.amountPaid;
+    followup.currentInstallment = installmentNumber;
+    
+    if (followup.remainingBalance <= 0) {
+      followup.paymentStatus = 'paid';
+    } else {
+      followup.paymentStatus = 'installment';
+    }
+    
+    await followup.save();
+    
+    res.json({ success: true, data: followup, message: `Installment ${installmentNumber} paid successfully` });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Pay deposit
+exports.payDeposit = async (req, res) => {
+  try {
+    const { amount, paymentMethod, transactionId } = req.body;
+    const followup = await Followup.findById(req.params.id);
+    
+    if (!followup) {
+      return res.status(404).json({ success: false, message: 'Followup not found' });
+    }
+    
+    const paymentAmount = parseFloat(amount || followup.depositAmount);
+    
+    followup.depositPaid = true;
+    followup.amountPaid = (followup.amountPaid || 0) + paymentAmount;
+    followup.remainingBalance = followup.totalAmount - followup.amountPaid;
+    
+    followup.payments.push({
+      amount: paymentAmount,
+      paymentDate: new Date(),
+      paymentMethod: paymentMethod || 'mpesa',
+      transactionId: transactionId,
+      notes: 'Deposit payment',
+      isDeposit: true
+    });
+    
+    if (followup.remainingBalance <= 0) {
+      followup.paymentStatus = 'paid';
+    } else {
+      followup.paymentStatus = 'deposit_paid';
+    }
+    
+    await followup.save();
+    
+    res.json({ success: true, data: followup, message: 'Deposit paid successfully' });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

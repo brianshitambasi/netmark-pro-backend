@@ -1,7 +1,9 @@
 const express = require('express');
 const router = express.Router();
-const { protect } = require('../middleware/auth');
 const {
+  setTotalAmount, protect } = require('../middleware/auth');
+const {
+  setTotalAmount,
   createFollowup,
   getFollowups,
   getFollowupById,
@@ -56,3 +58,6 @@ router.route('/:id')
   .delete(deleteFollowup);
 
 module.exports = router;
+
+// Set total amount for existing followup
+router.put('/:id/set-amount', setTotalAmount);
