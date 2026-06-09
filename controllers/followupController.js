@@ -185,6 +185,124 @@ exports.getFollowupById = async (req, res) => {
   }
 };
 
+// @desc    Reschedule follow-up date
+// @route   PUT /api/followups/:id/reschedule
+exports.rescheduleFollowup = async (req, res) => {
+  try {
+    const { nextCallDate, reason, daysToAdd } = req.body;
+    const followup = await Followup.findById(req.params.id);
+    
+    if (!followup) {
+      return res.status(404).json({
+        success: false,
+        message: 'Followup not found'
+      });
+    }
+    
+    const oldDate = followup.nextCallDate;
+    let newDate;
+    
+    if (daysToAdd) {
+      // Add specified number of days
+      newDate = moment(followup.nextCallDate).add(daysToAdd, 'days').toDate();
+    } else if (nextCallDate) {
+      // Set specific date
+      newDate = new Date(nextCallDate);
+    } else {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide either nextCallDate or daysToAdd'
+      });
+    }
+    
+    followup.nextCallDate = newDate;
+    followup.followupHistory.push({
+      action: 'rescheduled',
+      notes: reason || `Follow-up rescheduled from ${moment(oldDate).format('YYYY-MM-DD')} to ${moment(newDate).format('YYYY-MM-DD')}`,
+      previousValue: oldDate,
+      newValue: newDate
+    });
+    
+    await followup.save();
+    
+    // Update related task
+    await Task.findOneAndUpdate(
+      { 'relatedTo.id': followup._id, status: 'pending' },
+      { dueDate: newDate }
+    );
+    
+    res.json({
+      success: true,
+      data: followup,
+      message: `Follow-up rescheduled to ${moment(newDate).format('YYYY-MM-DD')}`,
+      oldDate: oldDate,
+      newDate: newDate
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+// @desc    Quick reschedule with common options
+// @route   POST /api/followups/:id/quick-reschedule
+exports.quickReschedule = async (req, res) => {
+  try {
+    const { option } = req.body;
+    const followup = await Followup.findById(req.params.id);
+    
+    if (!followup) {
+      return res.status(404).json({
+        success: false,
+        message: 'Followup not found'
+      });
+    }
+    
+    const daysMap = {
+      'tomorrow': 1,
+      'in_3_days': 3,
+      'in_1_week': 7,
+      'in_2_weeks': 14,
+      'in_1_month': 30
+    };
+    
+    const daysToAdd = daysMap[option];
+    if (!daysToAdd) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid reschedule option'
+      });
+    }
+    
+    const oldDate = followup.nextCallDate;
+    const newDate = moment(followup.nextCallDate).add(daysToAdd, 'days').toDate();
+    
+    followup.nextCallDate = newDate;
+    followup.followupHistory.push({
+      action: 'rescheduled',
+      notes: `Quick reschedule: ${option}`,
+      previousValue: oldDate,
+      newValue: newDate
+    });
+    
+    await followup.save();
+    
+    res.json({
+      success: true,
+      data: followup,
+      message: `Follow-up rescheduled to ${moment(newDate).format('YYYY-MM-DD')}`,
+      option: option
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
 // @desc    WhatsApp click tracking
 // @route   PUT /api/followups/:id/whatsapp-click
 exports.whatsappClick = async (req, res) => {
@@ -229,11 +347,11 @@ exports.whatsappClick = async (req, res) => {
   }
 };
 
-// @desc    Mark as followed
+// @desc    Mark as followed with optional auto-reschedule
 // @route   PUT /api/followups/:id/mark-followed
 exports.markFollowed = async (req, res) => {
   try {
-    const { notes, conversationHighlights } = req.body;
+    const { notes, conversationHighlights, autoReschedule, rescheduleDays } = req.body;
     const followup = await Followup.findById(req.params.id);
     
     if (!followup) {
@@ -267,21 +385,36 @@ exports.markFollowed = async (req, res) => {
       { status: 'completed', completedAt: new Date() }
     );
     
-    // Schedule next followup if needed
+    // Auto-reschedule next follow-up
     let nextFollowup = null;
-    if (req.body.scheduleNext && req.body.nextDate) {
+    if (autoReschedule && rescheduleDays) {
+      const newDate = moment().add(rescheduleDays, 'days').toDate();
       nextFollowup = await Followup.findByIdAndUpdate(
         followup._id,
-        { nextCallDate: req.body.nextDate },
+        { 
+          nextCallDate: newDate,
+          status: 'pending'
+        },
         { new: true }
       );
+      
+      // Create new task for next follow-up
+      const newTask = new Task({
+        title: `Follow up with ${followup.name}`,
+        description: `Next follow-up after ${rescheduleDays} days`,
+        type: 'followup',
+        dueDate: newDate,
+        relatedTo: { model: 'followup', id: followup._id },
+        createdBy: req.user.id
+      });
+      await newTask.save();
     }
     
     res.json({
       success: true,
       data: followup,
       nextFollowup,
-      message: `Marked ${followup.name} as followed`
+      message: `Marked ${followup.name} as followed${autoReschedule ? ' and rescheduled' : ''}`
     });
   } catch (error) {
     res.status(500).json({
@@ -338,115 +471,10 @@ exports.convertFollowup = async (req, res) => {
       }
     });
     
-    // Update recruitment goal
-    if (conversionType === 'team_member') {
-      const activeGoals = await Goal.find({
-        createdBy: req.user.id,
-        type: 'recruitment',
-        status: 'active'
-      });
-      
-      for (const goal of activeGoals) {
-        const count = await Followup.countDocuments({
-          createdBy: req.user.id,
-          status: 'converted',
-          conversionType: 'team_member',
-          convertedAt: { $gte: goal.startDate, $lte: goal.endDate }
-        });
-        goal.current = count;
-        await goal.save();
-      }
-    }
-    
     res.json({
       success: true,
       data: followup,
       message: `í¾‰ ${followup.name} converted successfully!`
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error.message
-    });
-  }
-};
-
-// @desc    Add objection to followup
-// @route   POST /api/followups/:id/objections
-exports.addObjection = async (req, res) => {
-  try {
-    const { objection } = req.body;
-    const followup = await Followup.findById(req.params.id);
-    
-    if (!followup) {
-      return res.status(404).json({
-        success: false,
-        message: 'Followup not found'
-      });
-    }
-    
-    followup.objections.push({
-      objection,
-      resolved: false,
-      date: new Date()
-    });
-    
-    followup.followupHistory.push({
-      action: 'objection_raised',
-      notes: objection
-    });
-    
-    await followup.save();
-    
-    res.json({
-      success: true,
-      data: followup,
-      message: 'Objection added successfully'
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error.message
-    });
-  }
-};
-
-// @desc    Resolve objection
-// @route   PUT /api/followups/:id/objections/:objectionId/resolve
-exports.resolveObjection = async (req, res) => {
-  try {
-    const { resolutionNotes } = req.body;
-    const followup = await Followup.findById(req.params.id);
-    
-    if (!followup) {
-      return res.status(404).json({
-        success: false,
-        message: 'Followup not found'
-      });
-    }
-    
-    const objection = followup.objections.id(req.params.objectionId);
-    if (!objection) {
-      return res.status(404).json({
-        success: false,
-        message: 'Objection not found'
-      });
-    }
-    
-    objection.resolved = true;
-    objection.resolutionNotes = resolutionNotes;
-    
-    followup.followupHistory.push({
-      action: 'objection_resolved',
-      notes: `Resolved: ${objection.objection}`
-    });
-    
-    await followup.save();
-    
-    res.json({
-      success: true,
-      data: followup,
-      message: 'Objection marked as resolved'
     });
   } catch (error) {
     res.status(500).json({
@@ -544,21 +572,28 @@ exports.deleteFollowup = async (req, res) => {
   }
 };
 
-// @desc    Bulk delete followups
-// @route   POST /api/followups/bulk-delete
-exports.bulkDelete = async (req, res) => {
+// @desc    Get follow-up history for a lead
+// @route   GET /api/followups/:id/history
+exports.getFollowupHistory = async (req, res) => {
   try {
-    const { ids } = req.body;
+    const followup = await Followup.findById(req.params.id)
+      .select('name followupHistory followupCount missedCount rescheduleCount');
     
-    const result = await Followup.deleteMany({
-      _id: { $in: ids },
-      createdBy: req.user.id
-    });
+    if (!followup) {
+      return res.status(404).json({
+        success: false,
+        message: 'Followup not found'
+      });
+    }
     
     res.json({
       success: true,
-      message: `Deleted ${result.deletedCount} followups`,
-      deletedCount: result.deletedCount
+      data: {
+        name: followup.name,
+        totalFollowups: followup.followupCount,
+        missedCount: followup.missedCount,
+        history: followup.followupHistory
+      }
     });
   } catch (error) {
     res.status(500).json({
@@ -568,8 +603,8 @@ exports.bulkDelete = async (req, res) => {
   }
 };
 
-// @desc    Get followup analytics
-// @route   GET /api/followups/analytics/summary
+// @desc    Get analytics
+// @route   GET /api/followups/analytics
 exports.getAnalytics = async (req, res) => {
   try {
     const { period = 'month' } = req.query;
@@ -591,7 +626,8 @@ exports.getAnalytics = async (req, res) => {
           },
           totalWhatsAppClicks: { $sum: { $cond: ['$whatsappClicked', 1, 0] } },
           totalSales: { $sum: '$salesAmount' },
-          averageFollowupCount: { $avg: '$followupCount' }
+          averageFollowupCount: { $avg: '$followupCount' },
+          rescheduleCount: { $sum: { $size: '$followupHistory' } }
         }
       }
     ]);
@@ -605,8 +641,7 @@ exports.getAnalytics = async (req, res) => {
       data: {
         period,
         ...stats[0],
-        conversionRate: conversionRate.toFixed(2),
-        goalProgress: conversionRate
+        conversionRate: conversionRate.toFixed(2)
       }
     });
   } catch (error) {

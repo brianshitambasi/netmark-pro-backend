@@ -8,36 +8,34 @@ const {
   whatsappClick,
   markFollowed,
   convertFollowup,
-  addObjection,
-  resolveObjection,
   updateFollowup,
   deleteFollowup,
-  bulkDelete,
+  rescheduleFollowup,
+  quickReschedule,
+  getFollowupHistory,
   getAnalytics
 } = require('../controllers/followupController');
 
-// All routes require authentication
 router.use(protect);
 
-// Bulk operations
-router.post('/bulk-delete', bulkDelete);
+// Analytics
 router.get('/analytics', getAnalytics);
+
+// Reschedule endpoints
+router.put('/:id/reschedule', rescheduleFollowup);
+router.post('/:id/quick-reschedule', quickReschedule);
+router.get('/:id/history', getFollowupHistory);
+
+// Action endpoints
+router.put('/:id/whatsapp-click', whatsappClick);
+router.put('/:id/mark-followed', markFollowed);
+router.put('/:id/convert', convertFollowup);
 
 // Main CRUD
 router.route('/')
   .get(getFollowups)
   .post(createFollowup);
 
-// Action routes
-router.put('/:id/whatsapp-click', whatsappClick);
-router.put('/:id/mark-followed', markFollowed);
-router.put('/:id/convert', convertFollowup);
-
-// Objection handling
-router.post('/:id/objections', addObjection);
-router.put('/:id/objections/:objectionId/resolve', resolveObjection);
-
-// Individual followup routes
 router.route('/:id')
   .get(getFollowupById)
   .put(updateFollowup)
