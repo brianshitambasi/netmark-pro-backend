@@ -1,9 +1,7 @@
 const express = require('express');
 const router = express.Router();
+const { protect } = require('../middleware/auth');
 const {
-  setTotalAmount, protect } = require('../middleware/auth');
-const {
-  setTotalAmount,
   createFollowup,
   getFollowups,
   getFollowupById,
@@ -20,7 +18,8 @@ const {
   getAnalytics,
   setPaymentPlan,
   payInstallment,
-  payDeposit
+  payDeposit,
+  setTotalAmount
 } = require('../controllers/followupController');
 
 router.use(protect);
@@ -42,6 +41,9 @@ router.post('/:id/set-payment-plan', setPaymentPlan);
 router.post('/:id/pay-installment', payInstallment);
 router.post('/:id/pay-deposit', payDeposit);
 
+// Set total amount for existing followup
+router.put('/:id/set-amount', setTotalAmount);
+
 // Action endpoints
 router.put('/:id/whatsapp-click', whatsappClick);
 router.put('/:id/mark-followed', markFollowed);
@@ -58,6 +60,3 @@ router.route('/:id')
   .delete(deleteFollowup);
 
 module.exports = router;
-
-// Set total amount for existing followup
-router.put('/:id/set-amount', setTotalAmount);
