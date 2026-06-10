@@ -10,8 +10,9 @@ exports.createProspect = async (req, res) => {
       pipelineStage: 'lead'
     });
     await prospect.save();
-    res.status(201).json({ success: true, data: prospect });
+    res.status(201).json({ success: true, data: prospect, message: 'Prospect added successfully' });
   } catch (error) {
+    console.error('Create prospect error:', error);
     res.status(500).json({ success: false, message: error.message });
   }
 };
@@ -33,6 +34,7 @@ exports.getProspects = async (req, res) => {
     
     res.json({ success: true, data: prospects, summary });
   } catch (error) {
+    console.error('Get prospects error:', error);
     res.status(500).json({ success: false, message: error.message });
   }
 };
@@ -46,6 +48,7 @@ exports.getProspectById = async (req, res) => {
     }
     res.json({ success: true, data: prospect });
   } catch (error) {
+    console.error('Get prospect by ID error:', error);
     res.status(500).json({ success: false, message: error.message });
   }
 };
@@ -60,28 +63,35 @@ exports.updateProspect = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Prospect not found' });
     }
     
-    // Update fields
-    if (pipelineStage) prospect.pipelineStage = pipelineStage;
+    // Update pipeline stage
+    if (pipelineStage) {
+      prospect.pipelineStage = pipelineStage;
+      // Add timestamp based on stage
+      if (pipelineStage === 'qualified') prospect.qualifiedAt = new Date();
+      if (pipelineStage === 'invited') prospect.invitedAt = new Date();
+      if (pipelineStage === 'presented') prospect.presentedAt = new Date();
+      if (pipelineStage === 'enrolled') prospect.enrolledAt = new Date();
+    }
+    
+    // Update other fields
     if (qualificationNotes !== undefined) prospect.qualificationNotes = qualificationNotes;
     if (invitationDetails) prospect.invitationDetails = { ...prospect.invitationDetails, ...invitationDetails };
     if (enrollmentDetails) prospect.enrollmentDetails = { ...prospect.enrollmentDetails, ...enrollmentDetails };
     
-    // Also update regular fields if provided
-    Object.keys(req.body).forEach(key => {
-      if (key !== 'pipelineStage' && key !== 'qualificationNotes' && key !== 'invitationDetails' && key !== 'enrollmentDetails') {
-        if (key === 'location') {
-          prospect.location = { ...prospect.location, ...req.body.location };
-        } else {
-          prospect[key] = req.body[key];
-        }
-      }
-    });
+    // Update basic fields if provided
+    if (req.body.name) prospect.name = req.body.name;
+    if (req.body.phone) prospect.phone = req.body.phone;
+    if (req.body.email) prospect.email = req.body.email;
+    if (req.body.occupation) prospect.occupation = req.body.occupation;
+    if (req.body.interestLevel) prospect.interestLevel = req.body.interestLevel;
+    if (req.body.notes) prospect.notes = req.body.notes;
+    if (req.body.location) prospect.location = { ...prospect.location, ...req.body.location };
     
     await prospect.save();
     
     res.json({ success: true, data: prospect, message: 'Prospect updated successfully' });
   } catch (error) {
-    console.error('Update error:', error);
+    console.error('Update prospect error:', error);
     res.status(500).json({ success: false, message: error.message });
   }
 };
@@ -90,8 +100,9 @@ exports.updateProspect = async (req, res) => {
 exports.deleteProspect = async (req, res) => {
   try {
     await Prospect.findByIdAndDelete(req.params.id);
-    res.json({ success: true, message: 'Prospect deleted' });
+    res.json({ success: true, message: 'Prospect deleted successfully' });
   } catch (error) {
+    console.error('Delete prospect error:', error);
     res.status(500).json({ success: false, message: error.message });
   }
 };
