@@ -241,3 +241,24 @@ FollowupSchema.pre('save', function(next) {
 });
 
 module.exports = mongoose.model('Followup', FollowupSchema);
+
+// Add package fields to FollowupSchema if not present
+/*
+  selectedPackage: {
+    name: { type: String, enum: ['ENTRIVERSE', 'NEOVERSE', 'TECHNOVERSE', 'DIGIVERSE', 'MEGAVERSE', 'CUSTOM'], default: 'CUSTOM' },
+    price: { type: Number, default: 0 },
+    accounts: { type: Number, default: 1 }
+  },
+  packageStatus: {
+    type: String,
+    enum: ['pending', 'partial', 'completed', 'activated'],
+    default: 'pending'
+  },
+  accountNumbers: [{
+    accountId: String,
+    assignedDate: Date,
+    status: { type: String, enum: ['pending', 'activated'], default: 'pending' }
+  }],
+  packageActivated: { type: Boolean, default: false },
+  activationDate: { type: Date, default: null }
+*/
