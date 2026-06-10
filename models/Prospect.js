@@ -331,3 +331,31 @@ ProspectSchema.pre('save', function(next) {
 });
 
 module.exports = mongoose.model('Prospect', ProspectSchema);
+
+// Add stage tracking fields
+/*
+  stage: {
+    type: String,
+    enum: ['lead', 'qualified', 'invited', 'presented', 'negotiation', 'enrolled'],
+    default: 'lead'
+  },
+  qualifiedAt: { type: Date, default: null },
+  invitedAt: { type: Date, default: null },
+  presentedAt: { type: Date, default: null },
+  enrolledAt: { type: Date, default: null },
+  qualificationNotes: { type: String, default: '' },
+  invitationDetails: {
+    method: { type: String, enum: ['whatsapp', 'email', 'call', 'in_person'], default: 'whatsapp' },
+    eventName: { type: String, default: '' },
+    eventDate: { type: Date, default: null },
+    eventLink: { type: String, default: '' },
+    attendance: { type: String, enum: ['pending', 'confirmed', 'attended', 'missed'], default: 'pending' }
+  },
+  enrollmentDetails: {
+    package: { type: String, default: '' },
+    amount: { type: Number, default: 0 },
+    paymentPlan: { type: String, default: '' },
+    sponsorId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    accountNumber: { type: String, default: '' }
+  }
+*/
