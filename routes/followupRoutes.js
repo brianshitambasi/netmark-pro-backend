@@ -22,21 +22,6 @@ const {
   setTotalAmount
 } = require('../controllers/followupController');
 
-// Check if required functions exist
-const requiredFunctions = [
-  'createFollowup', 'getFollowups', 'getFollowupById', 'whatsappClick',
-  'markFollowed', 'convertFollowup', 'updateFollowup', 'deleteFollowup',
-  'rescheduleFollowup', 'quickReschedule', 'addPayment', 'openAccount',
-  'updatePaymentDetails', 'getAnalytics', 'setPaymentPlan', 'payInstallment',
-  'payDeposit', 'setTotalAmount'
-];
-
-requiredFunctions.forEach(fn => {
-  if (typeof eval(fn) !== 'function') {
-    console.error(`ERROR: Function ${fn} is not properly exported`);
-  }
-});
-
 router.use(protect);
 
 // Analytics
