@@ -2,11 +2,11 @@ const Gallery = require('../models/Gallery');
 const cloudinary = require('../config/cloudinary');
 const fs = require('fs');
 
-// @desc    Upload media to gallery
+// @desc    Upload media (images, videos, audio)
 // @route   POST /api/gallery/upload
 exports.uploadMedia = async (req, res) => {
   try {
-    const { title, category, description, tags, isPublic } = req.body;
+    const { title, category, description, tags, isPublic, type } = req.body;
     const file = req.file;
     
     if (!file) {
@@ -15,37 +15,61 @@ exports.uploadMedia = async (req, res) => {
         message: 'No file uploaded'
       });
     }
+
+    // Determine file type
+    let resourceType = 'auto';
+    let mediaType = 'image';
     
+    if (file.mimetype.startsWith('image/')) {
+      mediaType = 'image';
+      resourceType = 'image';
+    } else if (file.mimetype.startsWith('video/')) {
+      mediaType = 'video';
+      resourceType = 'video';
+    } else if (file.mimetype.startsWith('audio/')) {
+      mediaType = 'audio';
+      resourceType = 'video'; // Cloudinary treats audio as video type
+    } else if (type === 'audio') {
+      mediaType = 'audio';
+      resourceType = 'video';
+    }
+
+    console.log(`Uploading ${mediaType} file: ${file.originalname} (${file.mimetype})`);
+
     // Upload to cloudinary
     const result = await cloudinary.uploader.upload(file.path, {
       folder: `netmark-pro/${req.user.id}`,
-      resource_type: 'auto',
-      transformation: [
+      resource_type: resourceType,
+      transformation: mediaType === 'audio' ? [
+        { audio: true },
+        { format: 'mp3' }
+      ] : [
         { quality: 'auto' },
         { fetch_format: 'auto' }
       ]
     });
     
-    // Get video duration if video
+    // Get duration if available
     let duration = 0;
-    if (result.resource_type === 'video' && result.duration) {
+    if (result.duration) {
       duration = Math.round(result.duration);
     }
     
     const galleryItem = new Gallery({
       title: title || file.originalname,
-      type: result.resource_type,
+      type: mediaType,
       url: result.secure_url,
-      thumbnail: result.resource_type === 'video' ? result.thumbnail_url : result.secure_url,
+      thumbnail: mediaType === 'audio' ? 'https://via.placeholder.com/300x200?text=Audio+Note' : (result.thumbnail_url || result.secure_url),
       category: category || 'other',
       description: description || '',
       tags: tags ? tags.split(',').map(t => t.trim()) : [],
       publicId: result.public_id,
       size: result.bytes,
-      width: result.width,
-      height: result.height,
-      duration,
+      width: result.width || 0,
+      height: result.height || 0,
+      duration: duration,
       isPublic: isPublic === 'true',
+      status: 'completed',
       createdBy: req.user.id
     });
     
@@ -57,7 +81,7 @@ exports.uploadMedia = async (req, res) => {
     res.status(201).json({
       success: true,
       data: galleryItem,
-      message: 'Media uploaded successfully'
+      message: `${mediaType} uploaded successfully`
     });
   } catch (error) {
     // Clean up file if error
@@ -65,9 +89,11 @@ exports.uploadMedia = async (req, res) => {
       fs.unlinkSync(req.file.path);
     }
     
+    console.error('Upload error:', error);
+    
     res.status(500).json({
       success: false,
-      message: error.message
+      message: error.message || 'Upload failed'
     });
   }
 };
@@ -85,8 +111,7 @@ exports.getGallery = async (req, res) => {
     if (search) {
       query.$or = [
         { title: { $regex: search, $options: 'i' } },
-        { description: { $regex: search, $options: 'i' } },
-        { tags: { $in: [new RegExp(search, 'i')] } }
+        { description: { $regex: search, $options: 'i' } }
       ];
     }
     
@@ -97,17 +122,11 @@ exports.getGallery = async (req, res) => {
     
     const total = await Gallery.countDocuments(query);
     
-    // Get category counts
-    const categoryCounts = await Gallery.aggregate([
-      { $match: { createdBy: req.user.id } },
-      { $group: { _id: '$category', count: { $sum: 1 } } }
-    ]);
-    
     const summary = {
       total,
       images: await Gallery.countDocuments({ createdBy: req.user.id, type: 'image' }),
       videos: await Gallery.countDocuments({ createdBy: req.user.id, type: 'video' }),
-      categories: categoryCounts
+      audio: await Gallery.countDocuments({ createdBy: req.user.id, type: 'audio' })
     };
     
     res.json({
@@ -141,13 +160,45 @@ exports.getGalleryItem = async (req, res) => {
       });
     }
     
-    // Increment view count
-    item.views += 1;
-    await item.save();
-    
     res.json({
       success: true,
       data: item
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+// @desc    Delete gallery item
+// @route   DELETE /api/gallery/:id
+exports.deleteGalleryItem = async (req, res) => {
+  try {
+    const item = await Gallery.findById(req.params.id);
+    
+    if (!item) {
+      return res.status(404).json({
+        success: false,
+        message: 'Item not found'
+      });
+    }
+    
+    // Delete from cloudinary
+    let resourceType = 'image';
+    if (item.type === 'video') resourceType = 'video';
+    if (item.type === 'audio') resourceType = 'video';
+    
+    await cloudinary.uploader.destroy(item.publicId, {
+      resource_type: resourceType
+    });
+    
+    await item.deleteOne();
+    
+    res.json({
+      success: true,
+      message: `Deleted "${item.title}" from gallery`
     });
   } catch (error) {
     res.status(500).json({
@@ -193,117 +244,24 @@ exports.updateGalleryItem = async (req, res) => {
   }
 };
 
-// @desc    Like gallery item
-// @route   PUT /api/gallery/:id/like
-exports.likeGalleryItem = async (req, res) => {
-  try {
-    const item = await Gallery.findById(req.params.id);
-    
-    if (!item) {
-      return res.status(404).json({
-        success: false,
-        message: 'Item not found'
-      });
-    }
-    
-    item.likes += 1;
-    await item.save();
-    
-    res.json({
-      success: true,
-      likes: item.likes,
-      message: 'Liked!'
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error.message
-    });
-  }
-};
-
-// @desc    Share gallery item (increment share count)
-// @route   PUT /api/gallery/:id/share
-exports.shareGalleryItem = async (req, res) => {
-  try {
-    const item = await Gallery.findById(req.params.id);
-    
-    if (!item) {
-      return res.status(404).json({
-        success: false,
-        message: 'Item not found'
-      });
-    }
-    
-    item.shared += 1;
-    await item.save();
-    
-    // Generate shareable link
-    const shareableLink = `${req.protocol}://${req.get('host')}/share/${item._id}`;
-    
-    res.json({
-      success: true,
-      shareableLink,
-      shares: item.shared,
-      message: 'Share link generated'
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error.message
-    });
-  }
-};
-
-// @desc    Delete gallery item
-// @route   DELETE /api/gallery/:id
-exports.deleteGalleryItem = async (req, res) => {
-  try {
-    const item = await Gallery.findById(req.params.id);
-    
-    if (!item) {
-      return res.status(404).json({
-        success: false,
-        message: 'Item not found'
-      });
-    }
-    
-    // Delete from cloudinary
-    await cloudinary.uploader.destroy(item.publicId, {
-      resource_type: item.type
-    });
-    
-    await item.deleteOne();
-    
-    res.json({
-      success: true,
-      message: `Deleted "${item.title}" from gallery`
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error.message
-    });
-  }
-};
-
 // @desc    Bulk delete gallery items
 // @route   POST /api/gallery/bulk-delete
 exports.bulkDeleteGallery = async (req, res) => {
   try {
     const { ids } = req.body;
     
-    // Get items to delete from cloudinary
     const items = await Gallery.find({ _id: { $in: ids }, createdBy: req.user.id });
     
-    // Delete from cloudinary
     for (const item of items) {
+      let resourceType = 'image';
+      if (item.type === 'video') resourceType = 'video';
+      if (item.type === 'audio') resourceType = 'video';
+      
       await cloudinary.uploader.destroy(item.publicId, {
-        resource_type: item.type
+        resource_type: resourceType
       });
     }
     
-    // Delete from database
     const result = await Gallery.deleteMany({
       _id: { $in: ids },
       createdBy: req.user.id

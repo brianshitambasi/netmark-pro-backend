@@ -4,12 +4,11 @@ const GallerySchema = new mongoose.Schema({
   title: {
     type: String,
     required: [true, 'Title is required'],
-    trim: true,
-    maxlength: [200, 'Title cannot be more than 200 characters']
+    trim: true
   },
   type: {
     type: String,
-    enum: ['image', 'video', 'document'],
+    enum: ['image', 'video', 'audio'],
     required: true
   },
   url: {
@@ -22,12 +21,11 @@ const GallerySchema = new mongoose.Schema({
   },
   category: {
     type: String,
-    enum: ['testimonial', 'event', 'training', 'product_demo', 'team_photo', 'certificate', 'other'],
-    required: true
+    enum: ['testimonial', 'event', 'training', 'product_demo', 'team_photo', 'other'],
+    default: 'other'
   },
   description: {
     type: String,
-    maxlength: [1000, 'Description cannot be more than 1000 characters'],
     default: ''
   },
   tags: [{
@@ -55,18 +53,6 @@ const GallerySchema = new mongoose.Schema({
     default: 0
   },
   duration: {
-    type: Number, // For videos in seconds
-    default: 0
-  },
-  views: {
-    type: Number,
-    default: 0
-  },
-  likes: {
-    type: Number,
-    default: 0
-  },
-  shared: {
     type: Number,
     default: 0
   },
@@ -74,9 +60,10 @@ const GallerySchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
-  shareableLink: {
+  status: {
     type: String,
-    default: ''
+    enum: ['processing', 'completed', 'failed'],
+    default: 'completed'
   },
   createdBy: {
     type: mongoose.Schema.Types.ObjectId,
@@ -94,41 +81,7 @@ const GallerySchema = new mongoose.Schema({
     default: Date.now
   }
 }, {
-  timestamps: true,
-  toJSON: { virtuals: true },
-  toObject: { virtuals: true }
-});
-
-// Indexes
-GallerySchema.index({ category: 1, createdAt: -1 });
-GallerySchema.index({ createdBy: 1, category: 1 });
-GallerySchema.index({ tags: 1 });
-
-// Virtual for file size formatted
-GallerySchema.virtual('sizeFormatted').get(function() {
-  if (this.size < 1024) return `${this.size} B`;
-  if (this.size < 1048576) return `${(this.size / 1024).toFixed(2)} KB`;
-  return `${(this.size / 1048576).toFixed(2)} MB`;
-});
-
-// Virtual for media type icon
-GallerySchema.virtual('icon').get(function() {
-  const icons = {
-    image: 'í¶¼ï¸',
-    video: 'í¾¥',
-    document: 'í³„'
-  };
-  return icons[this.type] || 'í³Ž';
-});
-
-// Pre-save middleware
-GallerySchema.pre('save', function(next) {
-  // Generate shareable link if public
-  if (this.isPublic && !this.shareableLink) {
-    this.shareableLink = `/share/${this._id}`;
-  }
-  this.updatedAt = Date.now();
-  next();
+  timestamps: true
 });
 
 module.exports = mongoose.model('Gallery', GallerySchema);
