@@ -3,10 +3,9 @@ const cloudinary = require('../config/cloudinary');
 const fs = require('fs');
 
 // @desc    Upload media (images, videos, audio)
-// @route   POST /api/gallery/upload
 exports.uploadMedia = async (req, res) => {
   try {
-    const { title, category, description, tags, isPublic, type } = req.body;
+    const { title, category, description, tags, isPublic } = req.body;
     const file = req.file;
     
     if (!file) {
@@ -17,59 +16,39 @@ exports.uploadMedia = async (req, res) => {
     }
 
     // Determine file type
-    let resourceType = 'auto';
     let mediaType = 'image';
     
     if (file.mimetype.startsWith('image/')) {
       mediaType = 'image';
-      resourceType = 'image';
     } else if (file.mimetype.startsWith('video/')) {
       mediaType = 'video';
-      resourceType = 'video';
     } else if (file.mimetype.startsWith('audio/')) {
       mediaType = 'audio';
-      resourceType = 'video'; // Cloudinary treats audio as video type
-    } else if (type === 'audio') {
-      mediaType = 'audio';
-      resourceType = 'video';
     }
 
-    console.log(`Uploading ${mediaType} file: ${file.originalname} (${file.mimetype})`);
+    console.log(`Uploading ${mediaType} file: ${file.originalname}`);
 
     // Upload to cloudinary
+    let resourceType = 'auto';
+    if (mediaType === 'image') resourceType = 'image';
+    if (mediaType === 'video' || mediaType === 'audio') resourceType = 'video';
+    
     const result = await cloudinary.uploader.upload(file.path, {
       folder: `netmark-pro/${req.user.id}`,
-      resource_type: resourceType,
-      transformation: mediaType === 'audio' ? [
-        { audio: true },
-        { format: 'mp3' }
-      ] : [
-        { quality: 'auto' },
-        { fetch_format: 'auto' }
-      ]
+      resource_type: resourceType
     });
-    
-    // Get duration if available
-    let duration = 0;
-    if (result.duration) {
-      duration = Math.round(result.duration);
-    }
     
     const galleryItem = new Gallery({
       title: title || file.originalname,
       type: mediaType,
       url: result.secure_url,
-      thumbnail: mediaType === 'audio' ? 'https://via.placeholder.com/300x200?text=Audio+Note' : (result.thumbnail_url || result.secure_url),
+      thumbnail: result.thumbnail_url || result.secure_url,
       category: category || 'other',
       description: description || '',
       tags: tags ? tags.split(',').map(t => t.trim()) : [],
       publicId: result.public_id,
       size: result.bytes,
-      width: result.width || 0,
-      height: result.height || 0,
-      duration: duration,
-      isPublic: isPublic === 'true',
-      status: 'completed',
+      duration: result.duration ? Math.round(result.duration) : 0,
       createdBy: req.user.id
     });
     
@@ -84,13 +63,10 @@ exports.uploadMedia = async (req, res) => {
       message: `${mediaType} uploaded successfully`
     });
   } catch (error) {
-    // Clean up file if error
     if (req.file && fs.existsSync(req.file.path)) {
       fs.unlinkSync(req.file.path);
     }
-    
     console.error('Upload error:', error);
-    
     res.status(500).json({
       success: false,
       message: error.message || 'Upload failed'
@@ -99,7 +75,6 @@ exports.uploadMedia = async (req, res) => {
 };
 
 // @desc    Get all gallery items
-// @route   GET /api/gallery
 exports.getGallery = async (req, res) => {
   try {
     const { category, type, search, page = 1, limit = 20 } = req.query;
@@ -148,79 +123,26 @@ exports.getGallery = async (req, res) => {
 };
 
 // @desc    Get single gallery item
-// @route   GET /api/gallery/:id
 exports.getGalleryItem = async (req, res) => {
   try {
     const item = await Gallery.findById(req.params.id);
-    
     if (!item) {
-      return res.status(404).json({
-        success: false,
-        message: 'Item not found'
-      });
+      return res.status(404).json({ success: false, message: 'Item not found' });
     }
-    
-    res.json({
-      success: true,
-      data: item
-    });
+    res.json({ success: true, data: item });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error.message
-    });
-  }
-};
-
-// @desc    Delete gallery item
-// @route   DELETE /api/gallery/:id
-exports.deleteGalleryItem = async (req, res) => {
-  try {
-    const item = await Gallery.findById(req.params.id);
-    
-    if (!item) {
-      return res.status(404).json({
-        success: false,
-        message: 'Item not found'
-      });
-    }
-    
-    // Delete from cloudinary
-    let resourceType = 'image';
-    if (item.type === 'video') resourceType = 'video';
-    if (item.type === 'audio') resourceType = 'video';
-    
-    await cloudinary.uploader.destroy(item.publicId, {
-      resource_type: resourceType
-    });
-    
-    await item.deleteOne();
-    
-    res.json({
-      success: true,
-      message: `Deleted "${item.title}" from gallery`
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error.message
-    });
+    res.status(500).json({ success: false, message: error.message });
   }
 };
 
 // @desc    Update gallery item
-// @route   PUT /api/gallery/:id
 exports.updateGalleryItem = async (req, res) => {
   try {
     const { title, category, description, tags, isPublic } = req.body;
-    
     const item = await Gallery.findById(req.params.id);
     
     if (!item) {
-      return res.status(404).json({
-        success: false,
-        message: 'Item not found'
-      });
+      return res.status(404).json({ success: false, message: 'Item not found' });
     }
     
     if (title) item.title = title;
@@ -231,51 +153,49 @@ exports.updateGalleryItem = async (req, res) => {
     
     await item.save();
     
-    res.json({
-      success: true,
-      data: item,
-      message: 'Item updated successfully'
-    });
+    res.json({ success: true, data: item, message: 'Item updated successfully' });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error.message
-    });
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Delete gallery item
+exports.deleteGalleryItem = async (req, res) => {
+  try {
+    const item = await Gallery.findById(req.params.id);
+    if (!item) {
+      return res.status(404).json({ success: false, message: 'Item not found' });
+    }
+    
+    let resourceType = 'image';
+    if (item.type === 'video') resourceType = 'video';
+    if (item.type === 'audio') resourceType = 'video';
+    
+    await cloudinary.uploader.destroy(item.publicId, { resource_type: resourceType });
+    await item.deleteOne();
+    
+    res.json({ success: true, message: `Deleted "${item.title}" from gallery` });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
   }
 };
 
 // @desc    Bulk delete gallery items
-// @route   POST /api/gallery/bulk-delete
 exports.bulkDeleteGallery = async (req, res) => {
   try {
     const { ids } = req.body;
-    
     const items = await Gallery.find({ _id: { $in: ids }, createdBy: req.user.id });
     
     for (const item of items) {
       let resourceType = 'image';
       if (item.type === 'video') resourceType = 'video';
       if (item.type === 'audio') resourceType = 'video';
-      
-      await cloudinary.uploader.destroy(item.publicId, {
-        resource_type: resourceType
-      });
+      await cloudinary.uploader.destroy(item.publicId, { resource_type: resourceType });
     }
     
-    const result = await Gallery.deleteMany({
-      _id: { $in: ids },
-      createdBy: req.user.id
-    });
-    
-    res.json({
-      success: true,
-      message: `Deleted ${result.deletedCount} items`,
-      deletedCount: result.deletedCount
-    });
+    const result = await Gallery.deleteMany({ _id: { $in: ids }, createdBy: req.user.id });
+    res.json({ success: true, message: `Deleted ${result.deletedCount} items`, deletedCount: result.deletedCount });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error.message
-    });
+    res.status(500).json({ success: false, message: error.message });
   }
 };
