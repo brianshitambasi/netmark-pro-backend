@@ -812,3 +812,108 @@ exports.setTotalAmount = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
+
+// @desc    Reschedule follow-up date
+// @route   PUT /api/followups/:id/reschedule
+exports.rescheduleFollowup = async (req, res) => {
+  try {
+    const { nextCallDate, reason, daysToAdd } = req.body;
+    const followup = await Followup.findById(req.params.id);
+    
+    if (!followup) {
+      return res.status(404).json({ success: false, message: 'Followup not found' });
+    }
+    
+    const oldDate = followup.nextCallDate;
+    let newDate;
+    
+    if (daysToAdd) {
+      newDate = moment(followup.nextCallDate).add(parseInt(daysToAdd), 'days').toDate();
+    } else if (nextCallDate) {
+      newDate = new Date(nextCallDate);
+    } else {
+      return res.status(400).json({ success: false, message: 'Please provide either nextCallDate or daysToAdd' });
+    }
+    
+    followup.nextCallDate = newDate;
+    followup.followupHistory = followup.followupHistory || [];
+    followup.followupHistory.push({
+      action: 'rescheduled',
+      notes: reason || `Follow-up rescheduled from ${moment(oldDate).format('YYYY-MM-DD')} to ${moment(newDate).format('YYYY-MM-DD')}`,
+      previousValue: oldDate,
+      newValue: newDate
+    });
+    
+    await followup.save();
+    
+    // Update related task
+    await Task.findOneAndUpdate(
+      { 'relatedTo.id': followup._id, status: 'pending' },
+      { dueDate: newDate }
+    );
+    
+    res.json({
+      success: true,
+      data: followup,
+      message: `Follow-up rescheduled to ${moment(newDate).format('YYYY-MM-DD')}`
+    });
+  } catch (error) {
+    console.error('Reschedule error:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Quick reschedule with preset options
+// @route   POST /api/followups/:id/quick-reschedule
+exports.quickReschedule = async (req, res) => {
+  try {
+    const { option } = req.body;
+    const followup = await Followup.findById(req.params.id);
+    
+    if (!followup) {
+      return res.status(404).json({ success: false, message: 'Followup not found' });
+    }
+    
+    const daysMap = {
+      'tomorrow': 1,
+      'in_3_days': 3,
+      'in_1_week': 7,
+      'in_2_weeks': 14,
+      'in_1_month': 30
+    };
+    
+    const daysToAdd = daysMap[option];
+    if (!daysToAdd) {
+      return res.status(400).json({ success: false, message: 'Invalid reschedule option' });
+    }
+    
+    const oldDate = followup.nextCallDate;
+    const newDate = moment(followup.nextCallDate).add(daysToAdd, 'days').toDate();
+    
+    followup.nextCallDate = newDate;
+    followup.followupHistory = followup.followupHistory || [];
+    followup.followupHistory.push({
+      action: 'rescheduled',
+      notes: `Quick reschedule: ${option}`,
+      previousValue: oldDate,
+      newValue: newDate
+    });
+    
+    await followup.save();
+    
+    // Update related task
+    await Task.findOneAndUpdate(
+      { 'relatedTo.id': followup._id, status: 'pending' },
+      { dueDate: newDate }
+    );
+    
+    res.json({
+      success: true,
+      data: followup,
+      message: `Follow-up rescheduled to ${moment(newDate).format('YYYY-MM-DD')}`
+    });
+  } catch (error) {
+    console.error('Quick reschedule error:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
