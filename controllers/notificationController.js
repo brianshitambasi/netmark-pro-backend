@@ -11,18 +11,18 @@ exports.getNotifications = async (req, res) => {
     const todayEnd = moment(now).endOf('day').toDate();
     const threeDays = moment(now).add(3, 'days').endOf('day').toDate();
 
-    // Overdue follow-ups (missed)
+    // Overdue follow-ups (missed) - include 'missed' status too
     const overdue = await Followup.find({
       createdBy: userId,
       nextCallDate: { $lt: todayStart },
-      status: { $in: ['pending', 'followed'] }
+      status: { $in: ['pending', 'followed', 'missed'] }
     }).sort({ nextCallDate: 1 });
 
-    // Due today
+    // Due today - include 'missed' and 'pending'
     const dueToday = await Followup.find({
       createdBy: userId,
       nextCallDate: { $gte: todayStart, $lte: todayEnd },
-      status: { $in: ['pending', 'followed'] }
+      status: { $in: ['pending', 'followed', 'missed'] }
     }).sort({ nextCallDate: 1 });
 
     // Upcoming within 3 days (excluding today)
@@ -34,14 +34,6 @@ exports.getNotifications = async (req, res) => {
 
     // Count for badge
     const urgentCount = overdue.length + dueToday.length;
-
-    // Check if any follow-up is unattended (pending for more than 7 days)
-    const sevenDaysAgo = moment(now).subtract(7, 'days').toDate();
-    const unattended = await Followup.countDocuments({
-      createdBy: userId,
-      status: 'pending',
-      createdAt: { $lte: sevenDaysAgo }
-    });
 
     // Get the most urgent notification (for popup)
     let mostUrgent = null;
@@ -107,7 +99,11 @@ exports.getNotifications = async (req, res) => {
           daysUntil: Math.ceil((new Date(f.nextCallDate) - now) / (1000 * 60 * 60 * 24)),
           status: f.status
         })),
-        unattendedCount: unattended
+        unattendedCount: await Followup.countDocuments({
+          createdBy: userId,
+          status: 'pending',
+          createdAt: { $lte: moment(now).subtract(7, 'days').toDate() }
+        })
       }
     });
   } catch (error) {
@@ -127,13 +123,13 @@ exports.getNotificationCount = async (req, res) => {
     const overdueCount = await Followup.countDocuments({
       createdBy: userId,
       nextCallDate: { $lt: todayStart },
-      status: { $in: ['pending', 'followed'] }
+      status: { $in: ['pending', 'followed', 'missed'] }
     });
 
     const dueTodayCount = await Followup.countDocuments({
       createdBy: userId,
       nextCallDate: { $gte: todayStart, $lte: moment(now).endOf('day').toDate() },
-      status: { $in: ['pending', 'followed'] }
+      status: { $in: ['pending', 'followed', 'missed'] }
     });
 
     res.json({
