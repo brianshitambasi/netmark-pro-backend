@@ -45,6 +45,7 @@ app.use('/api/dashboard', require('./routes/dashboardRoutes'));
 app.use('/api/events', require('./routes/eventRoutes'));
 app.use('/api/tasks', require('./routes/taskRoutes'));
 app.use('/api/templates', require('./routes/templateRoutes'));
+app.use('/api/notifications', require('./routes/notificationRoutes'));
 app.use('/api/prospects', require('./routes/prospectRoutes'));  // <-- MOVED HERE
 
 // 404 handler - THIS MUST BE LAST
