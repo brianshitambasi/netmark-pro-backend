@@ -1,6 +1,7 @@
-const cloudinary = require("../config/cloudinary");
 const User = require('../models/User');
 const Settings = require('../models/Settings');
+const cloudinary = require('../config/cloudinary');
+const fs = require('fs');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 
@@ -10,7 +11,6 @@ exports.register = async (req, res) => {
   try {
     const { name, email, password, whatsappNumber } = req.body;
 
-    // Check if user exists
     const existingUser = await User.findOne({ email });
     if (existingUser) {
       return res.status(400).json({
@@ -19,11 +19,9 @@ exports.register = async (req, res) => {
       });
     }
 
-    // Hash password
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
 
-    // Create user
     const user = await User.create({
       name: name || 'Network Marketer',
       email,
@@ -31,10 +29,8 @@ exports.register = async (req, res) => {
       whatsappNumber: whatsappNumber || ''
     });
 
-    // Create default settings for user
     await Settings.create({ user: user._id });
 
-    // Create token
     const token = jwt.sign(
       { id: user._id },
       process.env.JWT_SECRET,
@@ -66,7 +62,6 @@ exports.login = async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    // Check if user exists
     const user = await User.findOne({ email }).select('+password');
     if (!user) {
       return res.status(401).json({
@@ -75,7 +70,6 @@ exports.login = async (req, res) => {
       });
     }
 
-    // Check password
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
       return res.status(401).json({
@@ -84,11 +78,9 @@ exports.login = async (req, res) => {
       });
     }
 
-    // Update last login
     user.lastLogin = Date.now();
     await user.save();
 
-    // Create token
     const token = jwt.sign(
       { id: user._id },
       process.env.JWT_SECRET,
@@ -104,7 +96,8 @@ exports.login = async (req, res) => {
         email: user.email,
         whatsappNumber: user.whatsappNumber,
         settings: user.settings,
-        stats: user.stats
+        stats: user.stats,
+        profilePicture: user.profilePicture
       }
     });
   } catch (error) {
@@ -143,14 +136,12 @@ exports.updateProfile = async (req, res) => {
   try {
     const { name, whatsappNumber, settings } = req.body;
     
-    // Update user
     const user = await User.findByIdAndUpdate(
       req.user.id,
       { name, whatsappNumber },
       { new: true, runValidators: true }
     ).select('-password');
     
-    // Update settings if provided
     if (settings) {
       await Settings.findOneAndUpdate(
         { user: req.user.id },
@@ -179,7 +170,6 @@ exports.changePassword = async (req, res) => {
     
     const user = await User.findById(req.user.id).select('+password');
     
-    // Check current password
     const isMatch = await bcrypt.compare(currentPassword, user.password);
     if (!isMatch) {
       return res.status(401).json({
@@ -188,7 +178,6 @@ exports.changePassword = async (req, res) => {
       });
     }
     
-    // Hash new password
     const salt = await bcrypt.genSalt(10);
     user.password = await bcrypt.hash(newPassword, salt);
     await user.save();
@@ -218,12 +207,10 @@ exports.updateProfilePicture = async (req, res) => {
       });
     }
 
-    // If there's an existing profile picture, delete it from Cloudinary
     if (user.profilePicturePublicId) {
       await cloudinary.uploader.destroy(user.profilePicturePublicId);
     }
 
-    // Upload new profile picture
     const result = await cloudinary.uploader.upload(req.file.path, {
       folder: `netmark-pro/profiles/${req.user.id}`,
       width: 200,
@@ -236,8 +223,9 @@ exports.updateProfilePicture = async (req, res) => {
     user.profilePicturePublicId = result.public_id;
     await user.save();
 
-    // Clean up local file
-    fs.unlinkSync(req.file.path);
+    if (req.file && fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path);
+    }
 
     res.json({
       success: true,
@@ -247,7 +235,6 @@ exports.updateProfilePicture = async (req, res) => {
       message: 'Profile picture updated successfully'
     });
   } catch (error) {
-    // Clean up file if error
     if (req.file && fs.existsSync(req.file.path)) {
       fs.unlinkSync(req.file.path);
     }

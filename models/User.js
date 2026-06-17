@@ -27,6 +27,14 @@ const UserSchema = new mongoose.Schema({
     default: '',
     match: [/^[0-9+\-\s]+$/, 'Please add a valid phone number']
   },
+  profilePicture: {
+    type: String,
+    default: ''
+  },
+  profilePicturePublicId: {
+    type: String,
+    default: ''
+  },
   settings: {
     reminderTime: {
       type: String,
@@ -76,12 +84,10 @@ const UserSchema = new mongoose.Schema({
   toObject: { virtuals: true }
 });
 
-// Virtual for full name
 UserSchema.virtual('fullName').get(function() {
   return this.name;
 });
 
-// Update stats before save
 UserSchema.pre('save', function(next) {
   if (this.stats.totalFollowups > 0) {
     this.stats.conversionRate = (this.stats.totalConversions / this.stats.totalFollowups) * 100;
@@ -90,13 +96,3 @@ UserSchema.pre('save', function(next) {
 });
 
 module.exports = mongoose.model('User', UserSchema);
-
-// Add profile picture field to UserSchema
-profilePicture: {
-  type: String,
-  default: ''
-},
-profilePicturePublicId: {
-  type: String,
-  default: ''
-}
