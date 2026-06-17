@@ -205,7 +205,7 @@ exports.updateGoalProgress = async (req, res) => {
         success: true,
         data: goal,
         achieved: true,
-        message: `í¾‰ CONGRATULATIONS! You achieved your goal "${goal.title}"!`
+        message: ` CONGRATULATIONS! You achieved your goal "${goal.title}"!`
       });
     } else {
       res.json({
