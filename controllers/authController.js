@@ -1,3 +1,4 @@
+const cloudinary = require("../config/cloudinary");
 const User = require('../models/User');
 const Settings = require('../models/Settings');
 const bcrypt = require('bcryptjs');
@@ -195,6 +196,93 @@ exports.changePassword = async (req, res) => {
     res.json({
       success: true,
       message: 'Password changed successfully'
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+// @desc    Update profile picture
+// @route   PUT /api/auth/profile-picture
+exports.updateProfilePicture = async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id);
+    
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // If there's an existing profile picture, delete it from Cloudinary
+    if (user.profilePicturePublicId) {
+      await cloudinary.uploader.destroy(user.profilePicturePublicId);
+    }
+
+    // Upload new profile picture
+    const result = await cloudinary.uploader.upload(req.file.path, {
+      folder: `netmark-pro/profiles/${req.user.id}`,
+      width: 200,
+      height: 200,
+      crop: 'fill',
+      gravity: 'face'
+    });
+
+    user.profilePicture = result.secure_url;
+    user.profilePicturePublicId = result.public_id;
+    await user.save();
+
+    // Clean up local file
+    fs.unlinkSync(req.file.path);
+
+    res.json({
+      success: true,
+      data: {
+        profilePicture: user.profilePicture
+      },
+      message: 'Profile picture updated successfully'
+    });
+  } catch (error) {
+    // Clean up file if error
+    if (req.file && fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path);
+    }
+    console.error('Profile picture error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+// @desc    Remove profile picture
+// @route   DELETE /api/auth/profile-picture
+exports.removeProfilePicture = async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id);
+    
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    if (user.profilePicturePublicId) {
+      await cloudinary.uploader.destroy(user.profilePicturePublicId);
+    }
+
+    user.profilePicture = '';
+    user.profilePicturePublicId = '';
+    await user.save();
+
+    res.json({
+      success: true,
+      message: 'Profile picture removed successfully'
     });
   } catch (error) {
     res.status(500).json({
