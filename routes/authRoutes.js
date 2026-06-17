@@ -1,13 +1,17 @@
 const express = require('express');
 const router = express.Router();
-const { 
+const {
+  updateProfilePicture,
+  removeProfilePicture, 
   register, 
   login, 
   getMe, 
   updateProfile, 
   changePassword 
 } = require('../controllers/authController');
-const { protect } = require('../middleware/auth');
+const {
+  updateProfilePicture,
+  removeProfilePicture, protect } = require('../middleware/auth');
 
 // Public routes
 router.post('/register', register);
@@ -19,3 +23,7 @@ router.put('/update', protect, updateProfile);
 router.put('/change-password', protect, changePassword);
 
 module.exports = router;
+
+// Profile picture routes
+router.put('/profile-picture', protect, upload.single('profilePicture'), updateProfilePicture);
+router.delete('/profile-picture', protect, removeProfilePicture);

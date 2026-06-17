@@ -90,3 +90,13 @@ UserSchema.pre('save', function(next) {
 });
 
 module.exports = mongoose.model('User', UserSchema);
+
+// Add profile picture field to UserSchema
+profilePicture: {
+  type: String,
+  default: ''
+},
+profilePicturePublicId: {
+  type: String,
+  default: ''
+}
