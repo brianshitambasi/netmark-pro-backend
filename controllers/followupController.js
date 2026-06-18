@@ -358,7 +358,7 @@ exports.convertFollowup = async (req, res) => {
     await followup.save();
     await User.findByIdAndUpdate(req.user.id, { $inc: { 'stats.totalConversions': 1, 'stats.totalSales': salesAmount || 0 } });
     
-    res.json({ success: true, data: followup, message: `�� ${followup.name} converted successfully!` });
+    res.json({ success: true, data: followup, message: ` ${followup.name} converted successfully!` });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
