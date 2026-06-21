@@ -1,13 +1,10 @@
 const Followup = require('../models/Followup');
 const Goal = require('../models/Goal');
 const Gallery = require('../models/Gallery');
-const Task = require('../models/Task');
-const Event = require('../models/Event');
-const moment = require('moment');
-const Followup = require('../models/Followup');
 const Prospect = require('../models/Prospect');
+const moment = require('moment');
 
-// @desc    Get complete dashboard data
+// @desc    Get complete dashboard data with real analytics
 // @route   GET /api/dashboard/stats
 exports.getDashboardStats = async (req, res) => {
   try {
@@ -17,32 +14,33 @@ exports.getDashboardStats = async (req, res) => {
     const startOfWeek = moment().startOf('week');
     const startOfMonth = moment().startOf('month');
     const endOfMonth = moment().endOf('month');
-    
-    // Today's data
+    const last7Days = moment().subtract(7, 'days');
+
+    // ===== TODAY'S DATA =====
     const todayFollowups = await Followup.find({
       createdBy: userId,
       nextCallDate: { $gte: today, $lte: tomorrow },
       status: { $ne: 'converted' }
-    }).populate('createdBy', 'name');
-    
+    });
+
     const todayFollowed = await Followup.countDocuments({
       createdBy: userId,
       followedAt: { $gte: today, $lte: tomorrow }
     });
-    
-    // Overdue followups (RED ALERTS)
+
+    // ===== OVERDUE FOLLOWUPS =====
     const overdueFollowups = await Followup.find({
       createdBy: userId,
       nextCallDate: { $lt: new Date() },
       status: { $in: ['pending', 'followed'] }
     }).sort({ nextCallDate: 1 });
-    
+
     const missedCount = overdueFollowups.length;
     const criticalMissed = overdueFollowups.filter(f => 
       moment().diff(moment(f.nextCallDate), 'days') >= 3
     ).length;
-    
-    // Weekly stats
+
+    // ===== WEEKLY STATS =====
     const weeklyStats = {
       followupsCompleted: await Followup.countDocuments({
         createdBy: userId,
@@ -58,10 +56,14 @@ exports.getDashboardStats = async (req, res) => {
         createdBy: userId,
         whatsappClicked: true,
         whatsappClickedAt: { $gte: startOfWeek }
+      }),
+      prospectsAdded: await Prospect.countDocuments({
+        createdBy: userId,
+        createdAt: { $gte: startOfWeek }
       })
     };
-    
-    // Monthly stats
+
+    // ===== MONTHLY STATS =====
     const monthlyStats = {
       conversions: await Followup.countDocuments({
         createdBy: userId,
@@ -82,15 +84,61 @@ exports.getDashboardStats = async (req, res) => {
         createdBy: userId,
         status: 'followed',
         followedAt: { $gte: startOfMonth, $lte: endOfMonth }
+      }),
+      whatsappClicks: await Followup.countDocuments({
+        createdBy: userId,
+        whatsappClicked: true,
+        whatsappClickedAt: { $gte: startOfMonth, $lte: endOfMonth }
+      }),
+      prospectsAdded: await Prospect.countDocuments({
+        createdBy: userId,
+        createdAt: { $gte: startOfMonth, $lte: endOfMonth }
       })
     };
-    
-    // Active goals
+
+    // ===== DAILY ACTIVITY FOR CHART (Last 7 days) =====
+    const dailyActivity = [];
+    for (let i = 6; i >= 0; i--) {
+      const day = moment().subtract(i, 'days');
+      const dayStart = day.startOf('day');
+      const dayEnd = day.endOf('day');
+      
+      const followups = await Followup.countDocuments({
+        createdBy: userId,
+        createdAt: { $gte: dayStart, $lte: dayEnd }
+      });
+      
+      const followed = await Followup.countDocuments({
+        createdBy: userId,
+        followedAt: { $gte: dayStart, $lte: dayEnd }
+      });
+      
+      const whatsappClicks = await Followup.countDocuments({
+        createdBy: userId,
+        whatsappClickedAt: { $gte: dayStart, $lte: dayEnd }
+      });
+      
+      const prospects = await Prospect.countDocuments({
+        createdBy: userId,
+        createdAt: { $gte: dayStart, $lte: dayEnd }
+      });
+      
+      dailyActivity.push({
+        date: day.format('YYYY-MM-DD'),
+        label: day.format('ddd'),
+        followups,
+        followed,
+        whatsappClicks,
+        prospects
+      });
+    }
+
+    // ===== GOALS =====
     const activeGoals = await Goal.find({
       createdBy: userId,
       status: 'active'
     });
-    
+
     const goalSummary = activeGoals.map(goal => {
       const progress = (goal.current / goal.target) * 100;
       const daysRemaining = moment(goal.endDate).diff(moment(), 'days');
@@ -110,31 +158,30 @@ exports.getDashboardStats = async (req, res) => {
         unit: goal.unit
       };
     });
-    
-    // Recent activity
+
+    // ===== RECENT ACTIVITY =====
     const recentActivity = await Followup.find({ createdBy: userId })
       .sort({ updatedAt: -1 })
       .limit(10)
-      .select('name status updatedAt followupHistory');
-    
-    // Upcoming tasks
-    const upcomingTasks = await Task.find({
-      createdBy: userId,
-      status: 'pending',
-      dueDate: { $gte: today, $lte: moment().add(7, 'days').endOf('day') }
-    }).sort({ dueDate: 1 }).limit(5);
-    
-    // Recent media
+      .select('name status updatedAt followupHistory category');
+
+    // ===== RECENT MEDIA =====
     const recentMedia = await Gallery.find({ createdBy: userId })
       .sort({ createdAt: -1 })
-      .limit(8);
-    
-    // Upcoming events
-    const upcomingEvents = await Event.find({
-      createdBy: userId,
-      date: { $gte: new Date() }
-    }).sort({ date: 1 }).limit(3);
-    
+      .limit(8)
+      .select('title url type category createdAt');
+
+    // ===== SUMMARY STATS =====
+    const summary = {
+      total: await Followup.countDocuments({ createdBy: userId }),
+      pending: await Followup.countDocuments({ createdBy: userId, status: 'pending' }),
+      followed: await Followup.countDocuments({ createdBy: userId, status: 'followed' }),
+      converted: await Followup.countDocuments({ createdBy: userId, status: 'converted' }),
+      missed: await Followup.countDocuments({ createdBy: userId, status: 'missed' }),
+      totalWhatsAppClicks: await Followup.countDocuments({ createdBy: userId, whatsappClicked: true }),
+      totalProspects: await Prospect.countDocuments({ createdBy: userId })
+    };
+
     res.json({
       success: true,
       data: {
@@ -146,37 +193,32 @@ exports.getDashboardStats = async (req, res) => {
           criticalMissed
         },
         weekly: weeklyStats,
-        monthly: {
-          conversions: monthlyStats.conversions,
-          salesTotal: monthlyStats.salesTotal[0]?.total || 0,
-          followupsCompleted: monthlyStats.followupsCompleted
-        },
+        monthly: monthlyStats,
+        dailyActivity,
         overdueFollowups: overdueFollowups.map(f => ({
           id: f._id,
           name: f.name,
           phone: f.phone,
           dueDate: f.nextCallDate,
           missedDays: moment().diff(moment(f.nextCallDate), 'days'),
-          severity: moment().diff(moment(f.nextCallDate), 'days') >= 3 ? 'critical' : 'warning',
-          severityMessage: moment().diff(moment(f.nextCallDate), 'days') >= 3 
-            ? '⚠️ CRITICAL - Over 3 days overdue!' 
-            : '⚠️ Overdue - Needs attention'
+          severity: moment().diff(moment(f.nextCallDate), 'days') >= 3 ? 'critical' : 'warning'
         })),
         goals: goalSummary,
         recentActivity: recentActivity.map(a => ({
           id: a._id,
           name: a.name,
           status: a.status,
-          lastAction: a.followupHistory[a.followupHistory.length - 1]?.action || 'created',
+          category: a.category,
+          lastAction: a.followupHistory?.[a.followupHistory.length - 1]?.action || 'created',
           updatedAt: a.updatedAt
         })),
-        upcomingTasks,
         recentMedia,
-        upcomingEvents,
+        summary,
         timestamp: new Date()
       }
     });
   } catch (error) {
+    console.error('Dashboard error:', error);
     res.status(500).json({
       success: false,
       message: error.message
@@ -192,67 +234,26 @@ exports.getCalendarData = async (req, res) => {
     const startDate = moment(`${year}-${month}-01`).startOf('month');
     const endDate = moment(startDate).endOf('month');
     
-    // Get followups for the month
     const followups = await Followup.find({
       createdBy: req.user.id,
       nextCallDate: { $gte: startDate, $lte: endDate }
     });
     
-    // Get events for the month
-    const events = await Event.find({
-      createdBy: req.user.id,
-      date: { $gte: startDate, $lte: endDate }
-    });
-    
-    // Get tasks for the month
-    const tasks = await Task.find({
-      createdBy: req.user.id,
-      dueDate: { $gte: startDate, $lte: endDate }
-    });
-    
-    // Group by date
     const calendarData = {};
-    
     followups.forEach(followup => {
       const date = moment(followup.nextCallDate).format('YYYY-MM-DD');
-      if (!calendarData[date]) calendarData[date] = { followups: [], events: [], tasks: [] };
-      calendarData[date].followups.push({
+      if (!calendarData[date]) calendarData[date] = [];
+      calendarData[date].push({
         id: followup._id,
         name: followup.name,
         status: followup.status,
-        category: followup.category,
-        type: 'followup'
-      });
-    });
-    
-    events.forEach(event => {
-      const date = moment(event.date).format('YYYY-MM-DD');
-      if (!calendarData[date]) calendarData[date] = { followups: [], events: [], tasks: [] };
-      calendarData[date].events.push({
-        id: event._id,
-        title: event.title,
-        type: event.type,
-        time: event.time,
-        location: event.location
-      });
-    });
-    
-    tasks.forEach(task => {
-      const date = moment(task.dueDate).format('YYYY-MM-DD');
-      if (!calendarData[date]) calendarData[date] = { followups: [], events: [], tasks: [] };
-      calendarData[date].tasks.push({
-        id: task._id,
-        title: task.title,
-        priority: task.priority,
-        status: task.status
+        category: followup.category
       });
     });
     
     res.json({
       success: true,
-      data: calendarData,
-      month: parseInt(month),
-      year: parseInt(year)
+      data: calendarData
     });
   } catch (error) {
     res.status(500).json({
@@ -262,86 +263,50 @@ exports.getCalendarData = async (req, res) => {
   }
 };
 
-// @desc    Get performance analytics
+// @desc    Get analytics data
 // @route   GET /api/dashboard/analytics
 exports.getAnalytics = async (req, res) => {
   try {
-    const { period = 'month' } = req.query;
-    const startDate = moment().startOf(period);
-    
-    // Daily followups for the period
-    const dailyFollowups = await Followup.aggregate([
-      {
-        $match: {
-          createdBy: req.user.id,
-          createdAt: { $gte: startDate.toDate() }
-        }
-      },
-      {
-        $group: {
-          _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
-          count: { $sum: 1 },
-          conversions: {
-            $sum: { $cond: [{ $eq: ['$status', 'converted'] }, 1, 0] }
-          }
-        }
-      },
-      { $sort: { '_id': 1 } }
-    ]);
-    
-    // Conversion rate trend
-    let cumulativeConversions = 0;
-    let cumulativeFollowups = 0;
-    const conversionTrend = dailyFollowups.map(day => {
-      cumulativeFollowups += day.count;
-      cumulativeConversions += day.conversions;
-      return {
-        date: day._id,
-        conversionRate: cumulativeFollowups > 0 ? (cumulativeConversions / cumulativeFollowups) * 100 : 0
-      };
-    });
-    
-    // Category distribution
-    const categoryDistribution = await Followup.aggregate([
-      { $match: { createdBy: req.user.id } },
-      { $group: { _id: '$category', count: { $sum: 1 } } }
-    ]);
-    
-    // Performance by day of week
-    const performanceByDay = await Followup.aggregate([
-      { $match: { createdBy: req.user.id } },
-      {
-        $group: {
-          _id: { $dayOfWeek: '$createdAt' },
-          totalFollowups: { $sum: 1 },
-          totalConversions: {
-            $sum: { $cond: [{ $eq: ['$status', 'converted'] }, 1, 0] }
-          }
-        }
-      },
-      { $sort: { '_id': 1 } }
-    ]);
-    
-    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    const dayPerformance = performanceByDay.map(day => ({
-      day: dayNames[day._id - 1],
-      followups: day.totalFollowups,
-      conversions: day.totalConversions,
-      conversionRate: day.totalFollowups > 0 ? (day.totalConversions / day.totalFollowups) * 100 : 0
-    }));
-    
+    const userId = req.user.id;
+    const startOfMonth = moment().startOf('month');
+    const startOfWeek = moment().startOf('week');
+
+    // Conversion funnel data
+    const funnelData = {
+      leads: await Prospect.countDocuments({ createdBy: userId }),
+      qualified: await Prospect.countDocuments({ createdBy: userId, pipelineStage: 'qualified' }),
+      presented: await Prospect.countDocuments({ createdBy: userId, pipelineStage: 'presented' }),
+      enrolled: await Prospect.countDocuments({ createdBy: userId, pipelineStage: 'enrolled' })
+    };
+
+    // WhatsApp click stats
+    const whatsappStats = {
+      totalClicks: await Followup.countDocuments({ createdBy: userId, whatsappClicked: true }),
+      thisMonth: await Followup.countDocuments({
+        createdBy: userId,
+        whatsappClicked: true,
+        whatsappClickedAt: { $gte: startOfMonth }
+      }),
+      thisWeek: await Followup.countDocuments({
+        createdBy: userId,
+        whatsappClicked: true,
+        whatsappClickedAt: { $gte: startOfWeek }
+      })
+    };
+
+    // Conversion rate
+    const totalFollowups = await Followup.countDocuments({ createdBy: userId });
+    const totalConversions = await Followup.countDocuments({ createdBy: userId, status: 'converted' });
+    const conversionRate = totalFollowups > 0 ? (totalConversions / totalFollowups) * 100 : 0;
+
     res.json({
       success: true,
       data: {
-        dailyFollowups,
-        conversionTrend,
-        categoryDistribution,
-        dayPerformance,
-        summary: {
-          totalFollowups: dailyFollowups.reduce((sum, d) => sum + d.count, 0),
-          totalConversions: dailyFollowups.reduce((sum, d) => sum + d.conversions, 0),
-          averageDailyFollowups: dailyFollowups.length > 0 ? dailyFollowups.reduce((sum, d) => sum + d.count, 0) / dailyFollowups.length : 0
-        }
+        funnel: funnelData,
+        whatsapp: whatsappStats,
+        conversionRate: conversionRate.toFixed(2),
+        totalFollowups,
+        totalConversions
       }
     });
   } catch (error) {
@@ -349,51 +314,5 @@ exports.getAnalytics = async (req, res) => {
       success: false,
       message: error.message
     });
-  }
-};
-
-// @desc    Get daily activity (prospects created, follow-ups done)
-// @route   GET /api/dashboard/activity
-exports.getDailyActivity = async (req, res) => {
-  try {
-    const userId = req.user.id;
-    const days = 7; // last 7 days
-    const dates = [];
-    const prospectCounts = [];
-    const followupCounts = [];
-
-    for (let i = days - 1; i >= 0; i--) {
-      const date = moment().subtract(i, 'days');
-      const start = date.clone().startOf('day');
-      const end = date.clone().endOf('day');
-      const dateStr = date.format('YYYY-MM-DD');
-
-      // Prospects created on that day
-      const prospects = await Prospect.countDocuments({
-        createdBy: userId,
-        createdAt: { $gte: start.toDate(), $lte: end.toDate() }
-      });
-
-      // Follow-ups created/completed on that day (we'll count created)
-      const followups = await Followup.countDocuments({
-        createdBy: userId,
-        createdAt: { $gte: start.toDate(), $lte: end.toDate() }
-      });
-
-      dates.push(dateStr);
-      prospectCounts.push(prospects);
-      followupCounts.push(followups);
-    }
-
-    res.json({
-      success: true,
-      data: {
-        dates,
-        prospectCounts,
-        followupCounts
-      }
-    });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
   }
 };
