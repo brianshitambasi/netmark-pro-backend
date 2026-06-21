@@ -4,6 +4,8 @@ const Gallery = require('../models/Gallery');
 const Task = require('../models/Task');
 const Event = require('../models/Event');
 const moment = require('moment');
+const Followup = require('../models/Followup');
+const Prospect = require('../models/Prospect');
 
 // @desc    Get complete dashboard data
 // @route   GET /api/dashboard/stats
@@ -347,5 +349,51 @@ exports.getAnalytics = async (req, res) => {
       success: false,
       message: error.message
     });
+  }
+};
+
+// @desc    Get daily activity (prospects created, follow-ups done)
+// @route   GET /api/dashboard/activity
+exports.getDailyActivity = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const days = 7; // last 7 days
+    const dates = [];
+    const prospectCounts = [];
+    const followupCounts = [];
+
+    for (let i = days - 1; i >= 0; i--) {
+      const date = moment().subtract(i, 'days');
+      const start = date.clone().startOf('day');
+      const end = date.clone().endOf('day');
+      const dateStr = date.format('YYYY-MM-DD');
+
+      // Prospects created on that day
+      const prospects = await Prospect.countDocuments({
+        createdBy: userId,
+        createdAt: { $gte: start.toDate(), $lte: end.toDate() }
+      });
+
+      // Follow-ups created/completed on that day (we'll count created)
+      const followups = await Followup.countDocuments({
+        createdBy: userId,
+        createdAt: { $gte: start.toDate(), $lte: end.toDate() }
+      });
+
+      dates.push(dateStr);
+      prospectCounts.push(prospects);
+      followupCounts.push(followups);
+    }
+
+    res.json({
+      success: true,
+      data: {
+        dates,
+        prospectCounts,
+        followupCounts
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
   }
 };

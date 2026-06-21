@@ -14,3 +14,6 @@ router.get('/calendar', getCalendarData);
 router.get('/analytics', getAnalytics);
 
 module.exports = router;
+
+// Add this route
+router.get('/activity', protect, getDailyActivity);
