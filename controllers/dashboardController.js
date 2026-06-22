@@ -14,7 +14,6 @@ exports.getDashboardStats = async (req, res) => {
     const startOfWeek = moment().startOf('week');
     const startOfMonth = moment().startOf('month');
     const endOfMonth = moment().endOf('month');
-    const last7Days = moment().subtract(7, 'days');
 
     // ===== TODAY'S DATA =====
     const todayFollowups = await Followup.find({
@@ -35,12 +34,7 @@ exports.getDashboardStats = async (req, res) => {
       status: { $in: ['pending', 'followed'] }
     }).sort({ nextCallDate: 1 });
 
-    const missedCount = overdueFollowups.length;
-    const criticalMissed = overdueFollowups.filter(f => 
-      moment().diff(moment(f.nextCallDate), 'days') >= 3
-    ).length;
-
-    // ===== WEEKLY STATS =====
+    // ===== WEEKLY STATS - FIXED: Use assignedTo for Prospects =====
     const weeklyStats = {
       followupsCompleted: await Followup.countDocuments({
         createdBy: userId,
@@ -57,8 +51,9 @@ exports.getDashboardStats = async (req, res) => {
         whatsappClicked: true,
         whatsappClickedAt: { $gte: startOfWeek }
       }),
+      // FIX: Prospects use 'assignedTo' not 'createdBy'
       prospectsAdded: await Prospect.countDocuments({
-        createdBy: userId,
+        assignedTo: userId,
         createdAt: { $gte: startOfWeek }
       })
     };
@@ -90,13 +85,14 @@ exports.getDashboardStats = async (req, res) => {
         whatsappClicked: true,
         whatsappClickedAt: { $gte: startOfMonth, $lte: endOfMonth }
       }),
+      // FIX: Prospects use 'assignedTo' not 'createdBy'
       prospectsAdded: await Prospect.countDocuments({
-        createdBy: userId,
+        assignedTo: userId,
         createdAt: { $gte: startOfMonth, $lte: endOfMonth }
       })
     };
 
-    // ===== DAILY ACTIVITY FOR CHART (Last 7 days) =====
+    // ===== DAILY ACTIVITY FOR CHART - FIXED =====
     const dailyActivity = [];
     for (let i = 6; i >= 0; i--) {
       const day = moment().subtract(i, 'days');
@@ -118,8 +114,9 @@ exports.getDashboardStats = async (req, res) => {
         whatsappClickedAt: { $gte: dayStart, $lte: dayEnd }
       });
       
+      // FIX: Prospects use 'assignedTo' not 'createdBy'
       const prospects = await Prospect.countDocuments({
-        createdBy: userId,
+        assignedTo: userId,
         createdAt: { $gte: dayStart, $lte: dayEnd }
       });
       
@@ -171,7 +168,7 @@ exports.getDashboardStats = async (req, res) => {
       .limit(8)
       .select('title url type category createdAt');
 
-    // ===== SUMMARY STATS =====
+    // ===== SUMMARY STATS - FIXED =====
     const summary = {
       total: await Followup.countDocuments({ createdBy: userId }),
       pending: await Followup.countDocuments({ createdBy: userId, status: 'pending' }),
@@ -179,7 +176,8 @@ exports.getDashboardStats = async (req, res) => {
       converted: await Followup.countDocuments({ createdBy: userId, status: 'converted' }),
       missed: await Followup.countDocuments({ createdBy: userId, status: 'missed' }),
       totalWhatsAppClicks: await Followup.countDocuments({ createdBy: userId, whatsappClicked: true }),
-      totalProspects: await Prospect.countDocuments({ createdBy: userId })
+      // FIX: Prospects use 'assignedTo' not 'createdBy'
+      totalProspects: await Prospect.countDocuments({ assignedTo: userId })
     };
 
     res.json({
@@ -189,8 +187,8 @@ exports.getDashboardStats = async (req, res) => {
           followupsDue: todayFollowups,
           followupsDueCount: todayFollowups.length,
           followedCompleted: todayFollowed,
-          missed: missedCount,
-          criticalMissed
+          missed: overdueFollowups.length,
+          criticalMissed: overdueFollowups.filter(f => moment().diff(moment(f.nextCallDate), 'days') >= 3).length
         },
         weekly: weeklyStats,
         monthly: monthlyStats,
@@ -271,15 +269,14 @@ exports.getAnalytics = async (req, res) => {
     const startOfMonth = moment().startOf('month');
     const startOfWeek = moment().startOf('week');
 
-    // Conversion funnel data
+    // FIX: Prospects use 'assignedTo' not 'createdBy'
     const funnelData = {
-      leads: await Prospect.countDocuments({ createdBy: userId }),
-      qualified: await Prospect.countDocuments({ createdBy: userId, pipelineStage: 'qualified' }),
-      presented: await Prospect.countDocuments({ createdBy: userId, pipelineStage: 'presented' }),
-      enrolled: await Prospect.countDocuments({ createdBy: userId, pipelineStage: 'enrolled' })
+      leads: await Prospect.countDocuments({ assignedTo: userId }),
+      qualified: await Prospect.countDocuments({ assignedTo: userId, pipelineStage: 'qualified' }),
+      presented: await Prospect.countDocuments({ assignedTo: userId, pipelineStage: 'presented' }),
+      enrolled: await Prospect.countDocuments({ assignedTo: userId, pipelineStage: 'enrolled' })
     };
 
-    // WhatsApp click stats
     const whatsappStats = {
       totalClicks: await Followup.countDocuments({ createdBy: userId, whatsappClicked: true }),
       thisMonth: await Followup.countDocuments({
@@ -294,7 +291,6 @@ exports.getAnalytics = async (req, res) => {
       })
     };
 
-    // Conversion rate
     const totalFollowups = await Followup.countDocuments({ createdBy: userId });
     const totalConversions = await Followup.countDocuments({ createdBy: userId, status: 'converted' });
     const conversionRate = totalFollowups > 0 ? (totalConversions / totalFollowups) * 100 : 0;
